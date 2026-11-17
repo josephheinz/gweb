@@ -8,7 +8,9 @@
 #    (422 with the GW-Fragment echo), multipart with a _csrf field, the saved
 #    file, the 413 over MAX_UPLOAD (a page) and over --max-upload (a route), the
 #    JSON errors of a route, and that the upload dir holds no gw-/gnet- temp file
-#    after each request.
+#    after each request. A body over a limit: a 413 page for a browser (the app's
+#    error.html), JSON for fetch, a too_large hook's 303, no reset for a client
+#    that sends its whole body; gweb test applies the limits too.
 # 2. A bad field type and a user fn decode must fail gweb build, with file:line; so must {#fragment} or @slot() in loading.html.
 #
 # Needs curl, python3 and gweb built beside this folder (goose build -o gweb
@@ -181,17 +183,73 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$([ "$(status r6)" = 400 ] && echo ok)" "a malformed multipart body: 400"
     check "$(temp_clean && echo ok)" "no temp file at the end"
 
+    # A body over its limit (gweb 1.5): HTML for a browser, JSON for fetch, or the page's too_large hook.
+    H="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    req t1 POST /upload -H "$C" -H "$H" -F "_csrf=$TK" -F "photo=@$WORK/big.bin;filename=big.bin"
+    check "$([ "$(status t1)" = 413 ] && has_header t1 'content-type: text/html' && body_has t1 'This file is too large. The limit is 195.3 KiB.' && echo ok)" "over MAX_UPLOAD from a browser: a 413 page naming the limit"
+    req t2 POST /upload -H "$C" -F "_csrf=$TK" -F "photo=@$WORK/big.bin;filename=big.bin"
+    check "$([ "$(status t2)" = 413 ] && has_header t2 'content-type: application/json' && body_has t2 '"error":"This file is too large. The limit is 195.3 KiB."' && echo ok)" "over MAX_UPLOAD from fetch (Accept */*): JSON"
+    req t3 POST /files -H "$C" -H "$H" -F "_csrf=$TK" -F "doc=@$WORK/huge.bin;filename=huge.bin"
+    check "$([ "$(status t3)" = 413 ] && body_has t3 '<h1 id="files-error">413: This file is too large. The limit is 976.5 KiB.</h1>' && body_has t3 '<main>' && echo ok)" "over --max-upload (unread) from a browser: the app's error.html in its layout"
+    check "$(has_header t3 'connection: close' && echo ok)" "the unread body closes the connection"
+    req t4 POST /files -H "$C" -H "$H" -H 'GW-Fragment: x' -F "doc=@$WORK/huge.bin;filename=huge.bin"
+    check "$([ "$(status t4)" = 413 ] && has_header t4 'content-type: application/json' && echo ok)" "a fragment request over the limit: JSON"
+    req t5 POST /api/upload -H "$C" -H "$H" -F "photo=@$WORK/huge.bin;filename=huge.bin"
+    check "$([ "$(status t5)" = 413 ] && has_header t5 'content-type: text/html' && body_has t5 'This file is too large.' && echo ok)" "a route posted from a browser form: a 413 page, not JSON"
+    req t6 POST "/files/hooked?folder=3" -H "$C" -H "$H" -F "doc=@$WORK/huge.bin;filename=huge.bin"
+    check "$([ "$(status t6)" = 303 ] && has_header t6 'location: /files/hooked?folder=3&ue=files+can+be+at+most+195.3+kib' && echo ok)" "too_large over --max-upload (unread): 303 back to the form with the page's tighter MAX_UPLOAD, no CSRF field needed"
+    req t7 POST /files/hooked -H "$C" -H "$H" -F "_csrf=$TK" -F "doc=@$WORK/big.bin;filename=big.bin"
+    check "$([ "$(status t7)" = 303 ] && has_header t7 'location: /files/hooked?ue=files+can+be+at+most+195.3+kib' && echo ok)" "too_large over MAX_UPLOAD: 303 with that limit"
+    req t8 GET "/files/hooked?ue=Files+can+be+at+most+195.3+KiB" -H "$C"
+    check "$([ "$(status t8)" = 200 ] && body_has t8 '<p id="ue">Files can be at most 195.3 KiB</p>' && echo ok)" "the form shows the message"
+    req t9 POST /files/hooked -H "$C" -F "_csrf=$TK" -F "doc=@$WORK/small.bin;filename=s.bin"
+    check "$([ "$(status t9)" = 303 ] && has_header t9 'location: /thanks' && echo ok)" "within the limit the hook does not run"
+    req t10 POST /signup -H "$C" -H "$H" --data-binary "@$WORK/huge.bin"
+    check "$([ "$(status t10)" = 413 ] && has_header t10 'content-type: text/html' && body_has t10 'This request is too large. The limit is 1 MiB.' && echo ok)" "a form post over --max-body from a browser: a 413 page naming 1 MiB"
+    check "$(temp_clean && echo ok)" "no temp file after the refused bodies"
+    # A client that sends its whole refused body still reads the reply: the connection lingers, no reset.
+    linger=$(python3 - "$PORT" "$TK" <<'PY'
+import socket, sys
+port, tk = int(sys.argv[1]), sys.argv[2]
+body = b"x" * 5000000
+head = ("POST /files HTTP/1.1\r\nHost: x\r\nCookie: gw_csrf=%s\r\nAccept: text/html\r\n"
+        "Content-Type: multipart/form-data; boundary=zz\r\nContent-Length: %d\r\n\r\n" % (tk, len(body))).encode()
+s = socket.create_connection(("127.0.0.1", port))
+try:
+    s.sendall(head + body)
+    reply = b""
+    while True:
+        b = s.recv(65536)
+        if not b: break
+        reply += b
+    print("ok" if reply.startswith(b"HTTP/1.1 413") and b"The limit is 976.5 KiB." in reply else "bad reply %r" % reply[:80])
+except ConnectionResetError:
+    print("reset")
+PY
+)
+    check "$linger" "5 MB sent whole over --max-upload: the 413 arrives with no reset ($linger)"
+    req t11 GET /signup -H "$C"
+    check "$([ "$(status t11)" = 200 ] && echo ok)" "the server still answers"
+
     # The generated code reads like D1 and D9.
     GEN="$WORK/ok/.gweb"
     check "$(grep -qF '// gweb: form decoders (generated)' "$GEN/p"*"_signup.goose" 2>/dev/null && echo ok)" "the signup copy ends with the generated decoders"
     check "$(grep -qF 'gweb::form_i64(req, "age", f.age, errs, true);' "$GEN"/*signup.goose && grep -qF 'gweb::form_text(req, "note", f.note, errs, false);' "$GEN"/*signup.goose && echo ok)" "decoder statements: required and optional text, int"
     check "$(grep -qF 'gweb::form_upload(ctx, "photo", f.photo, errs, true);' "$GEN"/*upload.goose && echo ok)" "decoder statement for gweb::Upload"
     check "$(grep -qF '::MAX_UPLOAD > 0 && gweb::_content_length(req) >' "$GEN/main.goose" && grep -qF 'if gweb::_is_multipart(req)' "$GEN/main.goose" && echo ok)" "main.goose has the MAX_UPLOAD check and the multipart prelude"
+    check "$(grep -qF '::too_large(req, ctx, ctx.too_large); return; }' "$GEN/main.goose" && echo ok)" "main.goose calls the too_large hook"
     check "$(grep -qF 'gweb::_prepare_uploads(cfg);' "$GEN/main.goose" && echo ok)" "main() prepares the upload dir once"
   fi
   stop_server
 else
   bad "gweb build of the site"; echo "$out"
+fi
+
+# 1b. gweb test applies the body limits too (tests/too_large.goose).
+if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then
+  case "$out" in *"routes: 2 tests, 4 checks, 0 failed"*) ok ;; *) bad "gweb test of the site:"; echo "$out" ;; esac
+else
+  bad "gweb test of the site failed"; echo "$out"
 fi
 
 # 2. Expected failures, in a copy of the site.

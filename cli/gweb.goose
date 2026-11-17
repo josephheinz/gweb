@@ -55,6 +55,7 @@ struct Dir {
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
     max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
+    too_large: bool = false,      // page.goose or route.goose defines fn too_large( (gweb 1.5)
     error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false,   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
     loading: bool = false, loading_ns: u8[..32] = "",   // loading.html in this folder (DESIGN-ADDENDUM-14, section 4)
     in_sitemap: bool = true,                                                         // false: page.goose has const SITEMAP = false;
@@ -3427,11 +3428,15 @@ fn middleware_after(m: u8[>..]&, d: const Dir&, rq: const u8[:]) {
 }
 
 // DESIGN-ADDENDUM-14 D9: the MAX_UPLOAD check, then multipart turned into a plain form in r.
-fn gen_upload_prelude(m: u8[>..]&, ns: const u8[:], max_upload: bool) {
+// A body over a limit (ctx.too_large; the body is unread or ignored) goes to fn too_large( when the file has one; finish
+// answers a 413 unless it redirected or failed.
+fn gen_upload_prelude(m: u8[>..]&, ns: const u8[:], max_upload: bool, too_large: bool) {
     if max_upload {
-        // The dispatcher calls finish after this function returns, and finish answers the Error outcome.
-        format(m, "    if ", ns, "::MAX_UPLOAD > 0 && gweb::_content_length(req) > ", ns, "::MAX_UPLOAD { gweb::fail(ctx, 413, \"The upload is too large.\"); return; }\n");
+        format(m, "    if ", ns, "::MAX_UPLOAD > 0 && gweb::_content_length(req) > ", ns, "::MAX_UPLOAD { ctx.too_large = ", ns, "::MAX_UPLOAD; }\n");
     }
+    m.append("    if ctx.too_large > 0 { ");
+    if too_large { format(m, ns, "::too_large(req, ctx, ctx.too_large); "); }
+    m.append("return; }\n");
     m.append("    var mp: u8[>..] = [];\n    var r = req;\n");
     m.append("    if gweb::_is_multipart(req) { if !gweb::_multipart_begin(req, ctx, res, mp) { return; } r.body = mp; }\n");
 }
@@ -3443,7 +3448,7 @@ fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     let body = d.methods & 0x1c != 0;
     let rq = if body { "r" } else { "req" };
     format(m, "fn route_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "route.goose\n");
-    if body { gen_upload_prelude(m, d.route_ns, d.max_upload); }
+    if body { gen_upload_prelude(m, d.route_ns, d.max_upload, d.too_large); }
     if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !gweb::_csrf_ok(", rq, ", ctx, res) { return; }\n"); }
     else if d.methods & 0x3c != 0 { format(m, "    if !gweb::_csrf_ok(", rq, ", ctx, res) { return; }\n"); }
     middleware_before(m, d, rq);
@@ -3515,7 +3520,7 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     format(m, "        _ => { gweb::_method_not_allowed(res, \"", allow, "\"); return; },\n");
     m.append("    }\n");
     if d.has_post {
-        gen_upload_prelude(m, d.page_ns, d.max_upload);
+        gen_upload_prelude(m, d.page_ns, d.max_upload, d.too_large);
         m.append("    if !gweb::_csrf_ok(r, ctx, res) { return; }\n");
     }
     middleware_before(m, d, rq);
@@ -3843,6 +3848,8 @@ fn gen_sitemap(m: u8[>..]&) {
 
 fn gen_finish(m: u8[>..]&) {
     m.append("fn finish(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {\n");
+    // A body over its limit that no too_large hook redirected or failed: a 413 (a 404 stays a 404).
+    m.append("    if ctx.too_large > 0 && (ctx.outcome == gweb::Outcome.Continue || ctx.outcome == gweb::Outcome.Done) { gweb::_too_large_fail(req, ctx); }\n");
     m.append("    match ctx.outcome {\n        Continue => {},\n        Done => {},\n        NotFound => {\n");
     if has_not_found {
         m.append("            ctx.title.clear();\n            res.body.clear();\n            gweb::html(res, http::Status.NotFound);\n");
@@ -3899,7 +3906,9 @@ fn gen_error_reply(m: u8[>..]&) {
         if api.len > 0 { api.append(" || "); }
         format(api, "route == ", i);
     }
-    if api.len > 0 { format(m, "    if ", api, " { gweb::_error_json(res, info); return; }\n"); }
+    // A body over its limit: HTML for a browser navigation or form post, JSON otherwise, page or route.
+    m.append("    if ctx.too_large > 0 { if !gweb::_wants_html(req) { gweb::_error_json(res, info); return; } }\n");
+    if api.len > 0 { format(m, "    else if ", api, " { gweb::_error_json(res, info); return; }\n"); }
     m.append("    ctx.title.clear();\n    gweb::_error_start(res, info);\n");
     m.append("    match error_at(route) {\n");
     for e, k in dirs {
@@ -5034,6 +5043,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var code: u8[>..] = [];
             if copy_prefixed_forms(src, d.route_ns, code, true) {
                 d.max_upload = max_upload_const(code);
+                d.too_large = defines(code, "too_large");
                 for k in 7 { if defines(code, METHODS[k]) { d.methods |= 1 << k; } }
                 d.csrf_const = csrf_const(src, code, true);
                 if d.methods == 0 { err(src, 0, "route.goose defines none of fn GET(, POST(, PUT(, PATCH(, DELETE(, HEAD(, OPTIONS("); }
@@ -5089,6 +5099,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
                 var code: u8[>..] = [];
                 if copy_prefixed_forms(src, d.page_ns, code, true) {
                     d.max_upload = max_upload_const(code);
+                    d.too_large = defines(code, "too_large");
                     d.has_load = defines(code, "load");
                     d.has_post = defines(code, "POST");
                     d.has_load_res = takes_res(code, "load");

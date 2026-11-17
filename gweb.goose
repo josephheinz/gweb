@@ -78,7 +78,8 @@ struct Ctx {
     sampled: bool = false,
     start_us: i64 = 0,            // monotonic; 0 when nothing needed the time
     job_id: i64 = 0,              // set in a job runner's ctx
-    attempt: i64 = 0
+    attempt: i64 = 0,
+    too_large: i64 = 0            // the body limit the request is over (--max-upload, --max-body or MAX_UPLOAD); 0 = within it
 }
 
 // A file of a multipart post (gweb::upload). Lives here because Ctx holds it.
@@ -465,6 +466,25 @@ fn _plain_not_found(res: http::Response&) {
 
 // The request's Content-Length: 0 when absent, -1 when malformed. Pages with MAX_UPLOAD compare it before reading the body.
 fn _content_length(req: const http::Request&) -> i64 { return http::content_length(req.head); }
+
+// A byte count for people: "32 MiB", "1.5 MiB", "200 KiB", "512 bytes". Whole KiB and MiB are rounded down to one decimal.
+fn size_text(out: u8[>..]&, n: i64) {
+    let kib: i64 = 1024;
+    let mib: i64 = 1048576;
+    let gib: i64 = 1073741824;
+    if n >= gib { _size_unit(out, n, gib, " GiB"); }
+    else if n >= mib { _size_unit(out, n, mib, " MiB"); }
+    else if n >= kib { _size_unit(out, n, kib, " KiB"); }
+    else { format(out, n, if n == 1 { " byte" } else { " bytes" }); }
+}
+
+fn _size_unit(out: u8[>..]&, n: i64, unit: i64, name: const u8[:]) {
+    let whole = n / unit;
+    let tenth = (n % unit) * 10 / unit;
+    format(out, whole);
+    if tenth > 0 { format(out, ".", tenth); }
+    out.append(name);
+}
 
 // ---------------------------------------------------------------- config
 //
@@ -1095,8 +1115,10 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
     let lp = net::connection_loop(server, cfg.idle_ms, cfg.max_body, if cfg.workers == 1 { 0 } else { 1 });
     // Uploads: make the directory, then opt in. main() calls gweb::_prepare_uploads once first, which deletes files an earlier run left (names gnet-* and gw-*).
     // Without a usable directory a multipart body stays in memory, up to --max-body.
+    var uploads_on = false;
     if cfg.upload_dir.len > 0 && c_up_mkdir(cfg.upload_dir) != 0 {
-        if !lp.set_uploads(cfg.max_upload, cfg.spool_over, cfg.upload_dir) {
+        uploads_on = lp.set_uploads(cfg.max_upload, cfg.spool_over, cfg.upload_dir);
+        if !uploads_on {
             print("warning: cannot use upload dir ", cfg.upload_dir, "; uploads are limited to --max-body");
         }
     } else {
@@ -1114,7 +1136,10 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
         if cfg.metrics { c_metrics_conn(slot as i32, lp.open_connections()); }
         var res = http::new_response();
         match ev {
-            Request, Spooled => {
+            Request, Spooled, TooLarge => {
+                // TooLarge: raw is the head only and the body is unread. The app answers (a too_large hook, else a 413
+                // page or JSON); then the connection closes lingering, so a browser still sending reads the reply.
+                let refused = ev == net::Event.TooLarge;
                 let t0 = if timed { c_now_us() } else { 0 };
                 var ctx = _new_ctx(slot, owner_fd, cfg.hub);
                 ctx.start_us = t0;
@@ -1129,6 +1154,7 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
                     if sp.len > ctx.spool.cap { c_up_unlink(sp); spool_ok = false; } else { ctx.spool.append(sp); }
                 }
                 let req, parsed = http::parse_request(raw);
+                if refused { ctx.too_large = if uploads_on && _is_multipart(req) { cfg.max_upload } else { cfg.max_body }; }
                 c_if_begin(slot, conn.fd, raw);
                 var keep = false;
                 var static_index = -1;
@@ -1147,7 +1173,7 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
                     Reject r => http::json_error(res, r.status, http::reason(r.status)),
                     Closed => {},
                 }
-                keep = keep && !net::draining();
+                keep = keep && !net::draining() && !refused;
                 if ctx.request_id.len > 0 && !ctx.streamed { http::add_header(res, "X-Request-Id", ctx.request_id); }
                 let head_only = req.method == http::Method.Head;
                 var label: const u8[:] = if static_index >= 0 { "static" } else { _route_name(routes, ctx.route_label) };
@@ -1173,7 +1199,8 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
                         http::send_response(conn, res, head_only, keep)
                     };
                     blen = if static_index >= 0 { S(static_index).len } else { res.body.len };
-                    if !sent || !keep { lp.close_connection(conn); }
+                    if refused && sent { lp.close_lingering(conn); }
+                    else if !sent || !keep { lp.close_connection(conn); }
                 }
                 if !internal && (cfg.access_log || cfg.metrics || ctx.sampled) {
                     let dur = c_now_us() - t0;
@@ -1201,7 +1228,6 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
             Failed => {},
             _ => {
                 let status = match ev {
-                    TooLarge => http::Status.PayloadTooLarge,
                     HeadTooLarge => http::Status.HeaderFieldsTooLarge,
                     SpoolFailed => http::Status.InternalServerError,
                     Unsupported => http::Status.NotImplemented,

@@ -46,6 +46,27 @@ fn fail(ctx: Ctx&, status: i64, message: const u8[:]) {
     ctx.error_message.append(message[..min(message.len, 512)]);
 }
 
+// True for a browser navigation or an ordinary form post: Accept names text/html, before application/json if both,
+// and the request is neither a gweb fragment (GW-Fragment) nor an XHR (X-Requested-With). fetch() sends */*: false.
+fn _wants_html(req: const http::Request&) -> bool {
+    let f, frag = http::header(req, "gw-fragment");
+    let x, xhr = http::header(req, "x-requested-with");
+    let accept, has = http::header(req, "accept");
+    if frag || xhr || !has { return false; }
+    let h = find(accept, "text/html");
+    let j = find(accept, "application/json");
+    return h >= 0 && (j < 0 || h < j);
+}
+
+// The default answer to a body over its limit (ctx.too_large): a 413 whose message names the limit.
+fn _too_large_fail(req: const http::Request&, ctx: Ctx&) {
+    var m: u8[>..] = [];
+    m.append(if _is_multipart(req) { "This file is too large. The limit is " } else { "This request is too large. The limit is " });
+    size_text(m, ctx.too_large);
+    m.push('.');
+    fail(ctx, 413, m);
+}
+
 // 16 lowercase hex digits from 8 random bytes; zeros when the system has no entropy.
 fn _append_id(id: u8[..16]&) {
     var raw: u8[..8] = [0; 8];

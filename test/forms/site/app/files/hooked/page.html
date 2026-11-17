@@ -1,0 +1,5 @@
+<h1>Hooked</h1>
+{#if props.ue.len > 0}<p id="ue">{props.ue}</p>{/if}
+<form method="post" action="/files/hooked?folder=3" enctype="multipart/form-data">@gweb::csrf_field(ctx)
+<p><input type="file" name="doc"></p><button>Send</button>
+</form>

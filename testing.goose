@@ -116,6 +116,9 @@ fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: 
     var key_err: u8[>..] = [];
     if !_dev_secret(cfg.auth.keys, key_err) { expect(t, false, key_err); }   // sessions work in tests, as in gweb dev
     var ctx = _new_ctx(0, -1);
+    // As run_worker: a body over --max-upload (multipart) or --max-body reaches the app as ctx.too_large.
+    let limit = if _is_multipart(req) { cfg.max_upload } else { cfg.max_body };
+    if body.len > limit { ctx.too_large = limit; }
     let static_index, dev = _respond(req, ctx, -1, cfg, res, D);
     if static_index >= 0 { res.body.append(S(static_index)); }
     if req.method == http::Method.Head { res.body.clear(); }

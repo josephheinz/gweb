@@ -87,7 +87,7 @@ A `gweb::` function, type or constant is stable if the README, a page under `doc
 `DESIGN-ADDENDUM` documents it, or if it is in the Signatures block. That covers `Ctx`, `Config`, `Level`,
 `FieldErrors`, `FileOptions`, `Schedules`, `Sitemap`, `ErrorInfo`, `ViewMeta` and `FieldUi`, and the functions named
 in the README sections (cookies, CSRF, sessions, rate limits, CORS, forms, uploads, files, streaming, push, logging
-and metrics, i18n, Markdown, cache, jobs, tests). Added in 1.1: `FileOptions.sandbox`, `gweb::image_size`, `gweb::image_size_file`, `jobs::every_local`, and the generated `g_form_req`. Added in 1.2: `gweb::EnumLabel`, and redirect URLs up to 8,192 bytes. Added in 1.4: `gweb::form_text_max`. Names in the Limits table keep their stated defaults. A limit may
+and metrics, i18n, Markdown, cache, jobs, tests). Added in 1.1: `FileOptions.sandbox`, `gweb::image_size`, `gweb::image_size_file`, `jobs::every_local`, and the generated `g_form_req`. Added in 1.2: `gweb::EnumLabel`, and redirect URLs up to 8,192 bytes. Added in 1.4: `gweb::form_text_max`. Added in 1.5: `fn too_large(req, ctx, limit)` in `page.goose` and `route.goose`, `Ctx.too_large`, `gweb::size_text`, and a 413 page (not JSON) for a browser whose body is over a limit. Names in the Limits table keep their stated defaults. A limit may
 grow; it never shrinks.
 
 **Not stable:** a name the docs do not mention, and every name that begins with `_` (see Internal names). They may be

@@ -92,6 +92,9 @@ fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props                    
 fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> Props   // either page fn may take res; gweb::done(ctx) then keeps what it wrote
 fn static_paths() -> u8[..1024][>..]                                              // for gweb export, on a page with a dynamic segment
 
+// app/**/page.goose or route.goose, beside POST (1.5)
+fn too_large(req: const http::Request&, ctx: gweb::Ctx&, limit: i64)            // the body is over limit and unread: redirect or fail
+
 // app/**/middleware.goose
 fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> bool   // false: res is final
 fn after(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&)
@@ -1026,6 +1029,28 @@ gweb::save_upload(p.form.photo, dest);            // false if dest exists; the f
   One server per upload dir: files left by an earlier run are deleted at start.
 - Limits: 8 files (`--max-upload-files`, up to 16), 64 parts (`--max-upload-parts`), 64 KiB per text field
   (`--max-upload-text`); each has a `GWEB_*` variable. A malformed body is a 400, a file over the limit a 413.
+- A body over `--max-upload`, `--max-body` or `MAX_UPLOAD` is a 413 with a message that names the limit
+  (`This file is too large. The limit is 32 MiB.`). A browser navigation or form post (`Accept` names `text/html`,
+  no `GW-Fragment`) gets the nearest `error.html`, or the built-in page; fetch and fragment requests get JSON. A body
+  over `--max-upload` or `--max-body` is never read: the reply says `Connection: close`, and gweb reads and drops what
+  the client still sends (up to 10 s) before closing, so the browser shows the reply instead of a reset.
+- To answer it yourself, define `fn too_large` beside `fn POST` in `page.goose` or `route.goose` (1.5). It runs
+  instead of the handler, before the CSRF check, with the limit that applies; redirect back with a message, or call
+  `gweb::fail`. If it does neither, the 413 above follows. The body is empty, so read only the path, query, params
+  and cookies, and change nothing.
+
+```goose
+fn too_large(req: const http::Request&, ctx: gweb::Ctx&, limit: i64) {
+    var to: u8[>..] = [];
+    format(to, "/media?ue=Files+can+be+at+most+");
+    var size: u8[>..] = [];
+    gweb::size_text(size, limit);                // "32 MiB"
+    for c in size { if c == ' ' { to.push('+'); } else { to.push(c); } }
+    gweb::redirect(ctx, to, 303);
+}
+```
+
+  `gweb test` applies the same limits, so a test can post an oversized body.
 - Unsaved files are deleted after the response. Use `gweb::save_upload` to keep one.
 - `filename` and `content_type` are what the client said. `check_upload` checks the sniffed type (PNG, JPEG,
   GIF, WebP, PDF; never SVG). Build the saved name with `gweb::safe_name`.
