@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.3.0
 
 - New: `tool`, `run` and `hook` lines in `gweb.packages` and a package's `gweb.package` (a package with them says `gweb 1.3`). `gweb run NAME [args]` runs a command; a hook runs before `gweb build`, `start`, `export` and `dev` when its paths change, and a failing hook stops the build like a compile error. A tool is a Goose program gweb builds into `.gweb.tools/bin/`, with the app's library sources. `--no-hooks` or `GWEB_HOOKS=0` skips hooks. Add `.gweb.tools/` to `.gitignore`. See Addendum 21. Test: `test/hooks.sh`.
 - New: `gweb update [TAG]` moves the checkout, and `goose-net` and `goose-sqlite` beside it, to the latest release, rebuilds `gweb` and links it beside `goose` on `PATH`. Test: `test/update.sh`.
