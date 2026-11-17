@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (1.4)
+## v1.4.0
 
 - New: `gweb::Text` (128 characters, `<input>`) and `gweb::LongText` (65,536, `<textarea>`), growable text for view Props, in a `root struct Props` (Addendum 22). `FieldUi.max` changes the limit; `gen` warns `text-max` above 1 MiB. Reading never cuts them; a limit is a visible error that counts characters. A root struct may hold several repeaters, anywhere. Test: `test/text.sh`.
 - New: `read_errs(json, p, errs)` in each view's namespace and `g_read_errs(name, json, out_json, errs, prefix)` in `views` name fields whose stored text was cut or is over its limit; `g_read_errs` also runs `validate`, so merged JSON can be checked. `g_form_req` shows these errors on a GET.
