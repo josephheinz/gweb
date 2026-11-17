@@ -26,6 +26,8 @@ change.
   declares the tagged releases from GitHub, and the compiler fetches them on
   the first build.
 - `gweb version` prints the version and the sources it declares.
+- `gweb update` moves a linked gweb's checkout to the latest release, rebuilds it and links it on `PATH`. See
+  [the command](cli.md#gweb-update).
 - `GWEB_SRC`, `GWEB_NET` and `GWEB_SQLITE` override a source with a path or a
   git source with `@ref`.
 
