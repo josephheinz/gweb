@@ -164,6 +164,12 @@ var last_warnings: u8[>..];
 var strict = false;                    // --strict: warnings fail the run
 var json_diag = false;                 // --diagnostics json
 var debug_flag = false;                // build --debug
+var dev_gen = false;                   // this gen is a dev build's: public/ is served from disk, URLs are not hashed
+var raw_errors = false;                // --raw-errors or GWEB_RAW_ERRORS=1: the compiler's output as it is
+var static_only = false;               // gweb dev: only public/ changed since the last build
+var dev_fp: u64 = 0;                   // gweb dev: the fingerprint of .gweb/ that the saved server was built from
+var dev_cc_path: u8[>..];              // gweb dev's C compiler wrapper ("" = none: goose's own compiler)
+var dev_cc_done = false;
 
 fn note_errors(text: const u8[:]) {
     let room = 16384 - last_errors.len;
@@ -276,6 +282,68 @@ fn flush_diag(out: u8[>..]&, head: u8[>..]&, detail: u8[>..]&) {
     out.append("}\n");
     head.clear();
     detail.clear();
+}
+
+// A line of spaces with a ^ (and ~): the caret under the goose compiler's excerpt of the line it reports.
+fn is_caret_line(line: const u8[:]) -> bool {
+    var caret = false;
+    for c in line {
+        if c == '^' { caret = true; } else if c != ' ' && c != '~' && c != '\t' { return false; }
+    }
+    return caret;
+}
+
+// The compiler's errors as gweb shows them (raw_errors: as goose printed them). Each error once, with its source
+// line, without the instantiation chain: a template error is in a generated function that goose excerpts whole
+// (one line), and a generic one is reported once per instantiation. GWEB_RAW_ERRORS=1 or --raw-errors shows it all.
+// with_source false leaves a mapped line out (gweb dev's errors.txt shows the lines around it itself).
+fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
+    var out: u8[>..] = [];
+    var seen: u8[>..] = [];
+    seen.push('\n');
+    let lines = split(text, '\n');
+    var skip = false;          // inside a block already shown
+    var i = 0;
+    while i < lines.len {
+        let line = lines[i];
+        var path: u8[>..] = [];
+        var msg: u8[>..] = [];
+        var ln = 0;
+        var is_err = true;
+        if line.len > 0 && line[0] != ' ' && split_diag(line, path, ln, is_err, msg) {
+            var key: u8[>..] = [];
+            format(key, "\n", line, "\n");
+            skip = find(seen, key) >= 0;
+            if skip { i += 1; continue; }
+            seen.append(key[1..]);
+            format(out, line, "\n");
+            i += 1;
+            // goose's excerpt of the line, and the caret under it
+            if i + 1 < lines.len && is_caret_line(lines[i + 1]) {
+                let shown = lines[i];
+                var src: u8[>..] = [];
+                var real: u8[>..] = [];
+                var have = false;
+                if ln > 0 && !starts_with(path, ".gweb/") && read_file(path, src) {
+                    let sl = split(src, '\n');
+                    if ln <= sl.len { real.append(sl[ln - 1]); have = true; }
+                }
+                if !have || real == shown {
+                    format(out, shown, "\n", lines[i + 1], "\n");
+                } else if with_source {
+                    // goose excerpted the generated line, and its column is that line's: show the source line, no caret.
+                    format(out, real[..min(real.len, 240)], if real.len > 240 { " ..." } else { "" }, "\n");
+                }
+                i += 2;
+            }
+            continue;
+        }
+        if !skip && !(starts_with(line, "  in ") && find(line, " instantiated from ") >= 0) && !(line.len == 0 && i + 1 == lines.len) {
+            format(out, line, "\n");
+        }
+        i += 1;
+    }
+    return out;
 }
 
 // Compiler output (Goose's or the component translator's) to stderr: as is, or as JSON Lines in
@@ -1016,8 +1084,9 @@ var hook_keys: u8[..3200][>..<];       // gweb dev: each hook that ran, and the 
 var hook_seen: i64[>..<];
 var no_hooks = false;                  // --no-hooks or GWEB_HOOKS=0
 var hooks_changed_only = false;        // gweb dev after its first build: only hooks whose paths changed
-var hooks_ran = false;                 // the last run_hooks ran one; hook_stamp is stamp() after it
-var hook_stamp: i64 = 0;
+var hooks_ran = false;                 // the last run_hooks ran one; hook_code and hook_pub are the stamps after it
+var hook_code: i64 = 0;
+var hook_pub: i64 = 0;
 var self_bin: u8[>..];                 // this binary, absolute, for $GWEB
 let TOOLS_DIR = ".gweb.tools";
 
@@ -1347,7 +1416,10 @@ fn run_hooks() -> bool {
             if at >= 0 { hook_seen[at] = st; } else { hook_keys.push(key); hook_seen.push(st); }
         }
     }
-    if hooks_ran { hook_stamp = stamp(); }
+    if hooks_ran {
+        hook_code = code_stamp();
+        hook_pub = public_stamp();
+    }
     return true;
 }
 
@@ -1595,7 +1667,8 @@ fn scan_public_dir(base: const u8[:], prefix: const u8[:], rel: const u8[:], tod
         } else {
             s.etag = etag_of(data);
         }
-        s.hashed = hashed_url(s.url, s.etag);
+        // A dev build serves the file from disk (gen_static), so its URLs must not change with its bytes.
+        s.hashed = if dev_gen { s.url } else { hashed_url(s.url, s.etag) };
         statics.push(s);
     }
 }
@@ -3420,7 +3493,20 @@ fn gen_dispatch(m: u8[>..]&) {
     m.append("}\n");
 }
 
+// A dev build reads each file from disk per request: a change under public/ then needs no rebuild (gweb dev).
+fn gen_dev_static(m: u8[>..]&) {
+    m.append("fn static_bytes(i: i64) -> const u8[:] { return \"\"; }\n");
+    m.append("fn static_file(req: const http::Request&, res: http::Response&) -> i64, bool {\n");
+    for s in statics {
+        m.append("    if req.path == \""); lit(m, s.url);
+        m.append("\" { return gweb::_send_dev_static(res, \""); lit(m, s.file);
+        format(m, "\", \"", s.ctype, "\"), true; }\n");
+    }
+    m.append("    return -1, false;\n}\n");
+}
+
 fn gen_static(m: u8[>..]&) {
+    if dev_gen { gen_dev_static(m); return; }
     for s, i in statics {
         let src = if s.embed.len > 0 { s.embed } else { s.file };
         if src.len > 0 && src[0] == '/' {
@@ -4437,7 +4523,7 @@ fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
     s.url.append(url);
     s.file.append(file);
     s.etag = etag_of(data);
-    s.hashed = hashed_url(s.url, s.etag);
+    s.hashed = if dev_gen { s.url } else { hashed_url(s.url, s.etag) };
     statics.push(s);
 }
 
@@ -4638,6 +4724,7 @@ fn gen_components(dev: bool) {
 }
 
 fn gen(dev: bool, root: const u8[:]) -> bool {
+    dev_gen = dev && root == BUILD_DIR;
     has_locales = false;
     locale_notes.clear();
     locale_count = 0;
@@ -4849,8 +4936,10 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     check_http();
     if errors > 0 { return false; }
     if component_names.len > 0 || store_names.len > 0 || uses_fragments || uses_boost || uses_trans || uses_sse { gen_runtime(dev); }
-    check_hashed();
-    gen_variants();
+    if !dev_gen {
+        check_hashed();
+        gen_variants();
+    }
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());
@@ -4954,6 +5043,124 @@ fn component_lines_back(text: const u8[:]) -> u8[>..] {
     return out;
 }
 
+// ---------------------------------------------------------------- dev builds (docs/dev-builds.md)
+
+// FNV-1a over the names and bytes of every file under .gweb/ (symlinked lib/ folders included), less the binary.
+fn build_fp() -> u64 {
+    var h: u64 = 14695981039346656037;
+    var todo: u8[..1024][>..] = [];
+    todo.push(BUILD_DIR);
+    while todo.len > 0 {
+        let dir: u8[..1024] = todo[todo.len - 1];
+        todo.pop();
+        var names: u8[>..] = [];
+        if !list_dir(dir, names) { continue; }
+        var sorted: u8[..256][>..] = [];
+        for n in split(names, '\n') {
+            if n.len == 0 || n.len > 255 || n == "." || n == ".." { continue; }
+            if dir == BUILD_DIR && (n == "server" || n == DEV_MARK) { continue; }
+            var t: u8[..256] = "";
+            t.append(n);
+            sorted.push(t);
+        }
+        sort(sorted) { a, b => compare(a, b) < 0 };
+        for n in sorted {
+            var path: u8[>..] = [];
+            format(path, dir, "/", n);
+            for c in path { h = (h ^ c) * 1099511628211; }
+            if is_dir(path) {
+                if path.len < 1024 && todo.len < 4096 { var t: u8[..1024] = ""; t.append(path); todo.push(t); }
+                continue;
+            }
+            var data: u8[>..] = [];
+            if !read_file(path, data) { continue; }
+            h = (h ^ data.len as u64) * 1099511628211;
+            for c in data { h = (h ^ c) * 1099511628211; }
+        }
+    }
+    return h;
+}
+
+let DEV_MARK = ".cc-skipped";          // written into .gweb/ by the dev compiler when it reused the last binary
+let DEV_SERVER = ".gweb.dev/server";   // the last dev binary, kept across gen (which empties .gweb/)
+
+// The dev compiler: a sh script around the C compiler goose would pick (goose toolchain, so GOOSE_CC counts). It
+// compiles the program's own C (GOOSE_HOME/build/prog/*/main.c) at -O0, and when that C and the link inputs are the
+// ones it compiled last, copies the last binary instead. The runtime and packages' native C build as goose asks;
+// goose keys those objects by the compiler's path, so they build once more for the script. "" when there is no cc.
+let DEV_CC = """
+#!/bin/sh
+# Written by gweb for dev builds (gweb dev, gweb build --dev); rewritten when it differs. See docs/dev-builds.md.
+cc=@CC@
+case "$*" in *"/build/prog/"*"/main.c"*) ;; *) exec "$cc" "$@" ;; esac
+src= out= prev=
+for a do
+  shift
+  case $a in -O1|-O2|-O3|-Os|-Oz) a=-O0 ;; esac
+  [ "$prev" = -o ] && out=$a
+  case $a in */build/prog/*/main.c) src=$a ;; esac
+  prev=$a
+  set -- "$@" "$a"
+done
+d=${src%/main.c}
+{ printf '%s\n' "$@"; for a do case $a in @*) cat "${a#@}" ;; esac; done; } > "$d/gweb-key.new" 2>/dev/null
+if [ -n "$out" ] && [ -f "$d/gweb-bin" ] && cmp -s "$d/gweb-key.new" "$d/gweb-key" && cmp -s "$src" "$d/gweb-c" &&
+   cp "$d/gweb-bin" "$out"; then
+  [ -z "$GWEB_CC_MARK" ] || : > "$GWEB_CC_MARK"
+  exit 0
+fi
+rm -f "$d/gweb-key"
+"$cc" "$@" || exit
+[ -z "$out" ] || { cp "$src" "$d/gweb-c" && cp "$out" "$d/gweb-bin" && mv "$d/gweb-key.new" "$d/gweb-key"; }
+exit 0
+
+""";
+
+fn dev_cc() -> const u8[:] {
+    if dev_cc_done { return dev_cc_path; }
+    dev_cc_done = true;
+    var off: u8[>..] = [];
+    if env("GWEB_DEV_CC", off) && trim(off) == "0" { return dev_cc_path; }
+    var cmd: u8[>..] = [];
+    goose_cmd(cmd);
+    cmd.append(" toolchain");
+    var out: u8[>..] = [];
+    if c_run(cmd, out) != 0 { return dev_cc_path; }
+    var real: u8[>..] = [];
+    var style_cc = false;
+    let lines = split(out, '\n');
+    for line, k in lines {
+        if starts_with(line, "C compiler:") && k + 1 < lines.len && starts_with(trim(lines[k + 1]), "/") { real.append(trim(lines[k + 1])); }
+        if starts_with(line, "style:") && trim(line[6..]) == "cc" { style_cc = true; }
+    }
+    if real.len == 0 || !style_cc { return dev_cc_path; }
+    var base: u8[>..] = [];
+    var v: u8[>..] = [];
+    if env("XDG_CACHE_HOME", v) && v.len > 0 { base.append(v); }
+    else if env("HOME", v) && v.len > 0 { format(base, v, "/.cache"); }
+    else { return dev_cc_path; }
+    let tag = etag_of(real);
+    var dir: u8[>..] = [];
+    format(dir, base, "/gweb/cc-", tag[1..tag.len - 1]);
+    mkdir_p(dir);
+    var q: u8[>..] = [];
+    shq(q, real);
+    var text: u8[>..] = [];
+    format_replaced(text, DEV_CC, "@CC@", q);
+    var path: u8[>..] = [];
+    format(path, dir, "/cc");
+    var cur: u8[>..] = [];
+    if !read_file(path, cur) || cur != text {
+        if !write_file(path, text) { return dev_cc_path; }
+    }
+    cmd.clear();
+    cmd.append("chmod 755 ");
+    shq(cmd, path);
+    if c_run(cmd, out) != 0 { return dev_cc_path; }
+    dev_cc_path.append(path);
+    return dev_cc_path;
+}
+
 fn build(debug: bool, dev: bool) -> bool {
     let t0 = clock();
     last_errors.clear();
@@ -4963,13 +5170,43 @@ fn build(debug: bool, dev: bool) -> bool {
     if !gen(dev, BUILD_DIR) { return false; }
     var cwd: u8[>..] = [];
     c_cwd(cwd);
+    var bin: u8[>..] = [];
+    format(bin, cwd, "/", BUILD_DIR, "/server");
+    // gweb dev after a change under public/ alone: when gen wrote what the last binary was built from, that binary
+    // still serves the site (a dev build reads public/ from disk), so there is nothing to compile.
+    let fp: u64 = if dev { build_fp() } else { 0 };
+    if dev && static_only && !hooks_ran && component_errors == 0 && fp == dev_fp && file_exists(DEV_SERVER) {
+        var cp: u8[>..] = [];
+        cp.append("cp -p ");
+        shq(cp, DEV_SERVER);
+        cp.push(' ');
+        shq(cp, bin);
+        var o: u8[>..] = [];
+        if c_run(cp, o) == 0 {
+            var msg: u8[>..] = [];
+            format(msg, "gweb: built .gweb/server: only public/ changed, so the last binary serves it (", ((clock() - t0) * 100.0) as i64 as f64 / 100.0, " s)\n");
+            write_stdout(msg);
+            return true;
+        }
+    }
     var cmd: u8[>..] = [];
+    var mark: u8[>..] = [];
+    format(mark, cwd, "/", BUILD_DIR, "/", DEV_MARK);
+    if dev {
+        // The fastest correct C (docs/dev-builds.md): goose -O0, and the C at -O0 through the dev compiler.
+        cmd.append("GWEB_CC_MARK=");
+        shq(cmd, mark);
+        cmd.push(' ');
+    }
     goose_cmd(cmd);
     cmd.append(" build --color never ");
     if debug { cmd.append("--debug "); }
+    if dev {
+        cmd.append("-O0 ");
+        let cc = dev_cc();
+        if cc.len > 0 { cmd.append("--cc "); shq(cmd, cc); cmd.push(' '); }
+    }
     cmd.append("-o ");
-    var bin: u8[>..] = [];
-    format(bin, cwd, "/", BUILD_DIR, "/server");
     shq(cmd, bin);
     cmd.push(' ');
     var main_path: u8[>..] = [];
@@ -4977,10 +5214,11 @@ fn build(debug: bool, dev: bool) -> bool {
     shq(cmd, main_path);
     var out: u8[>..] = [];
     let status = c_run(cmd, out);
-    let shown = rewrite_errors(out, cwd);
+    let mapped = rewrite_errors(out, cwd);
+    let shown = if raw_errors { copy(mapped) } else { condense_errors(mapped, true) };
     if status != 0 {
         print_compiler(shown);
-        note_errors(shown);
+        if raw_errors { note_errors(mapped); } else { note_errors(condense_errors(mapped, false)); }
         if shown.len == 0 {
             say_error("gweb: goose build failed; is goose on PATH, or GOOSE set?");
             note_errors("gweb: goose build failed; is goose on PATH, or GOOSE set?\n");
@@ -4996,7 +5234,20 @@ fn build(debug: bool, dev: bool) -> bool {
     for d in dirs { if d.route { routes += 1; } if d.page_html { pages += 1; } }
     var msg: u8[>..] = [];
     format(msg, "gweb: built .gweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
-           ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)");
+           ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s");
+    if dev && file_exists(mark) { msg.append("; the C was unchanged, so its compile was skipped"); }
+    msg.push(')');
+    if dev {
+        // Kept for the next change under public/; gen empties .gweb/.
+        make_dir(".gweb.dev");
+        var cp: u8[>..] = [];
+        cp.append("cp -p ");
+        shq(cp, bin);
+        cp.push(' ');
+        shq(cp, DEV_SERVER);
+        var o: u8[>..] = [];
+        dev_fp = if c_run(cp, o) == 0 { fp } else { 0 };
+    }
     if warnings > 0 { format(msg, " (", warnings, " warnings)"); }
     msg.push('\n');
     write_stdout(msg);
@@ -5007,7 +5258,7 @@ fn build(debug: bool, dev: bool) -> bool {
 // ---------------------------------------------------------------- check, lsp-gen, lsp
 
 // Runs goose check on root/main.goose and prints the mapped errors to stderr. True when goose is happy.
-fn check_goose(root: const u8[:]) -> bool {
+fn check_goose(root: const u8[:], condense: bool) -> bool {
     var cwd: u8[>..] = [];
     c_cwd(cwd);
     var cmd: u8[>..] = [];
@@ -5018,7 +5269,7 @@ fn check_goose(root: const u8[:]) -> bool {
     shq(cmd, main_path);
     var out: u8[>..] = [];
     let status = c_run(cmd, out);
-    let shown = rewrite_errors(out, cwd);
+    let shown = if condense && !raw_errors { condense_errors(rewrite_errors(out, cwd), true) } else { rewrite_errors(out, cwd) };
     write_stderr(shown);
     if status != 0 && shown.len == 0 { write_stderr("gweb: goose check failed; is goose on PATH, or GOOSE set?\n"); }
     return status == 0;
@@ -5036,13 +5287,13 @@ fn lsp_gen_cmd(rest: u8[:][:]) {
             k += 3;
         } else { usage(); }
     }
-    if gen(true, LSP_DIR) && check { check_goose(LSP_DIR); }
+    if gen(true, LSP_DIR) && check { check_goose(LSP_DIR, false); }
 }
 
 fn check_cmd() -> bool {
     if !gen(false, CHECK_DIR) { return false; }
     var good = component_errors == 0;
-    if !check_goose(CHECK_DIR) { good = false; }
+    if !check_goose(CHECK_DIR, true) { good = false; }
     if good { write_stdout("gweb: check passed\n"); }
     return good;
 }
@@ -5571,7 +5822,7 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
     var skip = false;
     for a in extra {
         if skip { skip = false; continue; }
-        if a == "--strict" || a == "--no-minify" || a == "--no-hooks" { continue; }
+        if a == "--strict" || a == "--no-minify" || a == "--no-hooks" || a == "--raw-errors" { continue; }
         if a == "--diagnostics" { skip = true; continue; }
         cmd.push(' ');
         shq(cmd, a);
@@ -5579,14 +5830,15 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
     return cmd;
 }
 
-fn stamp() -> i64 {
+// What gweb dev watches besides public/.
+fn code_stamp() -> i64 {
     var count = 0;
     var newest = 0;
-    for dir in ["app", "lib", "public", "components", "locales", "stores", "views"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    for dir in ["app", "lib", "components", "locales", "stores", "views"] { newest = max(newest, c_tree_stamp(dir, count)); }
     // Path packages are edited beside the project; a git package is a cached tag and never changes.
     for pk in pkgs {
         if pk.git { continue; }
-        for sub in ["app", "lib", "public", "components", "stores", "views"] {
+        for sub in ["app", "lib", "components", "stores", "views"] {
             var dir: u8[>..] = [];
             format(dir, pk.dir, "/", sub);
             newest = max(newest, c_tree_stamp(dir, count));
@@ -5594,6 +5846,19 @@ fn stamp() -> i64 {
     }
     // A hook may watch a path outside those folders.
     for h in hooks { for p in split(h.watch, ',') { if p.len > 0 { newest = max(newest, c_tree_stamp(p, count)); } } }
+    return newest * 31 + count;
+}
+
+// The public/ folders: a dev build serves them from disk, so a change there alone needs no compile.
+fn public_stamp() -> i64 {
+    var count = 0;
+    var newest = c_tree_stamp("public", count);
+    for pk in pkgs {
+        if pk.git { continue; }
+        var dir: u8[>..] = [];
+        format(dir, pk.dir, "/public");
+        newest = max(newest, c_tree_stamp(dir, count));
+    }
     return newest * 31 + count;
 }
 
@@ -5657,7 +5922,8 @@ fn dev(extra: u8[:][:]) {
         }
     }
     var pid: i64 = -1;
-    var last = stamp();
+    var code = code_stamp();
+    var pub = public_stamp();
     write_dev_errors("");
     write_dev_warnings("");
     let first_ok = build(false, true);
@@ -5669,26 +5935,31 @@ fn dev(extra: u8[:][:]) {
         write_dev_errors(excerpts(last_errors));
         write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/, components/ and stores/\n");
     }
-    if pkgs.len > 0 || hooks.len > 0 { last = stamp(); }     // the package folders and hooks were not known before the first build
+    // The package folders and hooks were not known before the first build.
+    if pkgs.len > 0 || hooks.len > 0 || hooks_ran { code = code_stamp(); pub = public_stamp(); }
+    var ok_code: i64 = if first_ok { code } else { -1 };   // code_stamp() at the last build that passed
     loop {
         sleep_ms(250);
         if pid > 0 && c_wait(pid, 0) != -2 {
             write_stderr("gweb dev: the server exited; it starts again on the next change\n");
             pid = -1;
         }
-        let now = stamp();
-        if now == last { continue; }
+        if code_stamp() == code && public_stamp() == pub { continue; }
         sleep_ms(50);          // let an editor finish writing
-        last = stamp();
-        write_stdout("gweb dev: change seen, rebuilding\n");
+        code = code_stamp();
+        pub = public_stamp();
+        static_only = code == ok_code;
+        write_stdout(if static_only { "gweb dev: change seen under public/\n" } else { "gweb dev: change seen, rebuilding\n" });
         let built = build(false, true);
-        if hooks_ran { last = hook_stamp; }      // what a hook wrote is not a change
+        static_only = false;
+        if hooks_ran { code = hook_code; pub = hook_pub; }      // what a hook wrote is not a change
         write_dev_warnings(last_warnings);
         if !built {
             write_dev_errors(excerpts(last_errors));
             write_stderr("gweb dev: build failed; the old server keeps running\n");
             continue;
         }
+        ok_code = code;
         write_dev_errors("");
         if pid > 0 { c_kill(pid, 15); c_wait(pid, 1); }
         pid = c_spawn(server_cmd(extra, true));
@@ -6079,7 +6350,8 @@ let USAGE = """
 usage: gweb [-C dir] <command> [flags]
   new <dir>         make a starter project
   gen               write .gweb/ only
-  build [--debug]   gen, then goose build to .gweb/server
+  build [--debug]   gen, then goose build to .gweb/server; --dev builds what gweb dev runs (fast, unoptimized C;
+                    public/ read from disk, so run it from the project folder)
   start [flags]     build, then run the server (see the server flags below)
   dev [flags]       build, run on 127.0.0.1:60053, and rebuild on every change under app/, lib/, public/,
                     components/, locales/, stores/ and views/ (and in path packages); --host 0.0.0.0 opens it to the network
@@ -6096,6 +6368,8 @@ usage: gweb [-C dir] <command> [flags]
 gen, build, start, test and check also take --strict (warnings fail the run) and --diagnostics json (stderr as
 JSON Lines). gen, build, start and export take --no-minify (serve public/**/*.css as written).
 build, start, export and dev run the hooks first; --no-hooks (or GWEB_HOOKS=0) skips them.
+build, start, export and dev show each compiler error once, with its source line; --raw-errors (or GWEB_RAW_ERRORS=1)
+shows the compiler's whole output.
 
 server flags (gweb start, and .gweb/server): each has a GWEB_* variable, so --max-body is GWEB_MAX_BODY
   --port N --host H --workers N --access-log --idle-ms N --max-body N --max-upload N --upload-dir D
@@ -6142,6 +6416,8 @@ fn main() {
     if cmd == "version" || cmd == "--version" { print_version(); return; }
     var hv: u8[>..] = [];
     no_hooks = has_flag(rest, "--no-hooks") || (env("GWEB_HOOKS", hv) && trim(hv) == "0");
+    hv.clear();
+    raw_errors = has_flag(rest, "--raw-errors") || (env("GWEB_RAW_ERRORS", hv) && trim(hv) == "1");
     if cmd == "run" { run_cmd(rest); return; }
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
     if cmd == "test-css" { if !test_css() { exit(1); } return; }
@@ -6157,7 +6433,13 @@ fn main() {
     if cmd == "check" { parse_flags(rest, false); if !check_cmd() || !strict_ok() { exit(1); } return; }
     if cmd == "lsp" { lsp_cmd(a[0]); return; }
     if cmd == "test" { parse_flags(rest, false); if !test_cmd() || !strict_ok() { exit(1); } return; }
-    if cmd == "build" { parse_flags(rest, true); if !build(debug_flag, false) || !strict_ok() { exit(1); } return; }
+    if cmd == "build" {
+        parse_flags(rest, true);
+        let dev_flag = has_flag(rest, "--dev");
+        if dev_flag { minify = false; }
+        if !build(debug_flag, dev_flag) || !strict_ok() { exit(1); }
+        return;
+    }
     if cmd == "routes" { print_routes(); return; }
     if cmd == "start" {
         parse_flags(rest, false);
@@ -6172,7 +6454,7 @@ fn main() {
         var k = 0;
         while k < rest.len {
             if rest[k] == "-o" && k + 1 < rest.len && rest[k + 1].len > 0 { dir.clear(); dir.append(rest[k + 1]); k += 2; }
-            else if rest[k] == "--no-minify" || rest[k] == "--no-hooks" { k += 1; }
+            else if rest[k] == "--no-minify" || rest[k] == "--no-hooks" || rest[k] == "--raw-errors" { k += 1; }
             else { usage(); }
         }
         if !build(false, false) { exit(1); }

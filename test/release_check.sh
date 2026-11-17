@@ -177,6 +177,7 @@ step valid_test goose_test valid_test
 step upload_test goose_test upload_test
 step markdown_test goose_test markdown_test
 step srcmap sh "$HERE/srcmap.sh"
+step devbuild env PORT="${PORT:-4041}" sh "$HERE/devbuild.sh"
 step packages env PORT="${PORT:-4001}" sh "$HERE/packages.sh"
 step views sh "$HERE/views.sh"
 step cmsready env PORT="${PORT:-4005}" sh "$HERE/cmsready.sh"

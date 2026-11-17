@@ -3,6 +3,7 @@
 namespace gweb;
 
 import std;
+import os;
 import net;
 import net.http;
 import gweb;
@@ -36,4 +37,22 @@ fn _send_static(req: const http::Request&, res: http::Response&, index: i64, gz:
     res.content_type.clear();
     res.content_type.append(content_type);
     return sent;
+}
+
+// A dev build's static file (gweb dev, gweb build --dev): read from disk on each request, so a change to it needs no
+// rebuild. Never cached: the URL is not hashed. Returns -1, so the worker sends res.body.
+fn _send_dev_static(res: http::Response&, path: const u8[:], content_type: const u8[:]) -> i64 {
+    res.body.clear();
+    http::set_header(res, "Cache-Control", "no-store");
+    res.content_type.clear();
+    if !read_file(path, res.body) {
+        res.body.clear();
+        res.status = http::Status.NotFound;
+        res.content_type.append("text/plain; charset=utf-8");
+        res.body.append("gweb dev: this file is gone; it is dropped from the routes on the next rebuild\n");
+        return -1;
+    }
+    res.status = http::Status.Ok;
+    res.content_type.append(content_type);
+    return -1;
 }
