@@ -81,8 +81,10 @@ access log, and `--drain-ms 200`. The flags and variables still win, `.env` file
 Its builds are dev builds ([docs/dev-builds.md](../dev-builds.md)): unoptimized C, about 5 times faster to compile; no
 compile when the C is unchanged; and none when only `public/` changed, because the server reads `public/` from disk.
 
-Compiler errors show once each, with the source line. `--raw-errors` (or `GWEB_RAW_ERRORS=1`) on `build`, `start`,
-`export`, `dev` or `check` shows goose's whole output instead.
+Compiler errors show once each. A template error gives `file:line:col` and a short excerpt of the line with a caret; a
+missing field names whose struct it is and its fields (`views/items/TeamMember: Props has no field "rol" (it has:
+title, role)`). `--raw-errors` (or `GWEB_RAW_ERRORS=1`) on `build`, `start`, `export`, `dev`, `check` or `test` shows
+goose's whole output instead.
 
 ## `gweb update`
 

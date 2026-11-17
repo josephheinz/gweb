@@ -65,8 +65,8 @@ if command -v "${GOOSE:-goose}" >/dev/null 2>&1; then
   out=$("$GWEB" -C "$WORK/bad" check 2>&1); status=$?
   if [ "$status" -ne 1 ]; then
     bad "check on a type error exited $status, wanted 1"
-  elif ! echo "$out" | grep -q '^app/page\.html:[0-9][0-9]*: error:'; then
-    bad "check printed no app/page.html:LINE: error:"
+  elif ! echo "$out" | grep -q '^app/page\.html:[0-9][0-9]*\(:[0-9][0-9]*\)\{0,1\}: error:'; then
+    bad "check printed no app/page.html:LINE[:COL]: error:"
     echo "$out"
   elif [ -e "$WORK/bad/.gweb" ]; then
     bad "check wrote .gweb/"

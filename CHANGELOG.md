@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- New: a template compiler error is `file:line:col`, with an excerpt of about 80 characters around the column and a caret, not the whole generated-from line. Test: `test/devbuild.sh`.
+- New: goose's `struct Props has no field x` names whose Props it is and lists its fields: `views/items/TeamMember: Props has no field "rol" (it has: title, role, photo, bio)`, or `app/page.goose: ...` for a page's. Test: `test/devbuild.sh`.
+- New: `gweb test` condenses compiler errors as `build` does (`--raw-errors` shows goose's output).
+
 ## v1.4.0
 
 - New: `{#var n = e}` in page, layout and view templates: a mutable local, so a helper can fill it by reference (`{#var p = T { .. }}{#if fill(c, p)}`), as a root struct Props needs. Tests: `test/templates.sh`, `test/text.sh`.

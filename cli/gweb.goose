@@ -293,6 +293,181 @@ fn is_caret_line(line: const u8[:]) -> bool {
     return caret;
 }
 
+// The generated file (under gen_root) that map.txt maps to src, or "".
+fn gen_of(src: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    for line in split(map_text, '\n') {
+        let g, s, ok = split_once(line, '\t');
+        if ok && s == src { out.append(g); break; }
+    }
+    return out;
+}
+
+// The source that map.txt gives for the generated file gen, or "".
+fn src_of(gen: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    for line in split(map_text, '\n') {
+        let g, s, ok = split_once(line, '\t');
+        if ok && g == gen { out.append(s); break; }
+    }
+    return out;
+}
+
+// The source column (0-based) of column gcol of line ln of the generated file gen, from srcmap.txt's segments
+// (DESIGN-ADDENDUM-18, D1); exact when gcol is inside a segment's verbatim text. -1 when no segment covers it.
+fn src_col(gen: const u8[:], ln: i64, gcol: i64) -> i64, bool {
+    var in_file = false;
+    for line in split(srcmap_text, '\n') {
+        if starts_with(line, "file ") {
+            let g, s, ok = split_once(line[5..], ' ');
+            in_file = ok && g == gen;
+            continue;
+        }
+        if !in_file || !starts_with(line, "L ") { continue; }
+        let parts = split(line, ' ');
+        if parts.len < 4 { continue; }
+        let g, gok = parse_int(parts[1]);
+        if !gok || g != ln { continue; }
+        var col = -1;
+        var exact = false;
+        var k = 3;
+        while k < parts.len {
+            let p = split(parts[k], ':');
+            k += 1;
+            if p.len != 3 { continue; }
+            let a, ok1 = parse_int(p[0]);
+            let s, ok2 = parse_int(p[1]);
+            let n, ok3 = parse_int(p[2]);
+            if !ok1 || !ok2 || !ok3 || a > gcol { break; }
+            exact = gcol - a < n;
+            col = if exact { s + gcol - a } else { s + n };
+        }
+        return col, exact;
+    }
+    return -1, false;
+}
+
+fn ident_char(c: u8) -> bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
+
+// The type path (a::b::C) at the start of s, after an optional `const `; "" when there is none.
+fn type_at(s: const u8[:]) -> const u8[:] {
+    var t = trim_start(s);
+    if starts_with(t, "const ") { t = trim_start(t[6..]); }
+    var e = 0;
+    while e < t.len && (ident_char(t[e]) || (t[e] == ':' && e + 1 < t.len && t[e + 1] == ':')) {
+        e += if t[e] == ':' { 2 } else { 1 };
+    }
+    return t[..e];
+}
+
+// The type the generated code declares the local or parameter name with, before line ln, column col (1-based ln):
+// `var name = T {`, `let name = T {`, `name: T` or `name: const T&`. "" when it finds none.
+fn local_type(lines: const u8[:][:], ln: i64, col: i64, name: const u8[:]) -> u8[>..] {
+    var ty: u8[>..] = [];
+    var li = 0;
+    while li < ln && li < lines.len {
+        let l = if li + 1 == ln { lines[li][..min(col, lines[li].len)] } else { lines[li] };
+        li += 1;
+        var p = 0;
+        while p < l.len {
+            let k = find(l[p..], name);
+            if k < 0 { break; }
+            let at = p + k;
+            p = at + name.len;
+            if (at > 0 && (ident_char(l[at - 1]) || l[at - 1] == '.')) || (p < l.len && ident_char(l[p])) { continue; }
+            let rest = trim_start(l[p..]);
+            var t: u8[>..] = [];
+            if starts_with(rest, "=") && !starts_with(rest, "==") {
+                let r = trim_start(rest[1..]);
+                let tt = type_at(r);
+                // `= T {`: the struct literal's type (type_at skips a `const ` there is none of)
+                if tt.len > 0 && starts_with(trim_start(r[find(r, tt) + tt.len..]), "{") { t.append(tt); }
+            } else if starts_with(rest, ":") && !starts_with(rest, "::") {
+                t.append(type_at(rest[1..]));
+            }
+            if t.len > 0 && ident_char(t[0]) && !(t[0] >= '0' && t[0] <= '9') { ty.clear(); ty.append(t); }
+        }
+    }
+    return ty;
+}
+
+// For goose's `struct S has no field F` in the generated file gen at line ln, where token is the text its caret
+// marks (`a.rol`): the message naming whose struct it is and its fields, e.g.
+// `views/items/TeamMember: Props has no field "rol" (it has: title, role)`. "" when the struct is not the app's
+// (a library's, or a receiver the code does not declare plainly).
+fn field_msg(msg: const u8[:], gen: const u8[:], ln: i64, gcol: i64, token: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let k = find(msg, " has no field ");
+    if !starts_with(msg, "struct ") || k < 0 { return out; }
+    let sname = msg[7..k];
+    let fname = trim(msg[k + 14..]);
+    if fname.len == 0 || token.len <= fname.len + 1 || !ends_with(token, fname) || token[token.len - fname.len - 1] != '.' { return out; }
+    let recv = trim(token[..token.len - fname.len - 1]);
+    if !is_ident(recv) { return out; }
+    var code: u8[>..] = [];
+    var gpath: u8[>..] = [];
+    format(gpath, gen_root, "/", gen);
+    if !read_file(gpath, code) { return out; }
+    let lines = split(code, '\n');
+    var ns: u8[>..] = [];
+    if lines.len > 0 && starts_with(lines[0], "namespace ") {
+        let e = find(lines[0], ";");
+        if e > 10 { ns.append(trim(lines[0][10..e])); }
+    }
+    let ty = local_type(lines, ln, gcol, recv);
+    var tns: u8[>..] = [];
+    // A page's render takes props: const P& (its Props); a view's, props: const Props&.
+    if ty == sname || (recv == "props" && find(ty, "::") < 0) { tns.append(ns); }
+    else {
+        var want: u8[>..] = [];
+        format(want, "::", sname);
+        if !ends_with(ty, want) { return out; }
+        tns.append(ty[..ty.len - want.len]);
+    }
+    if tns.len == 0 { return out; }
+    var tgen: u8[>..] = [];
+    format(tgen, tns, ".goose");
+    let src_path = src_of(tgen);
+    var src: u8[>..] = [];
+    if src_path.len == 0 || !read_file(src_path, src) { return out; }
+    let sl = split(src, '\n');
+    let d = structs::find_decl(sl, "struct", sname);
+    if d < 0 { return out; }
+    var names: u8[>..] = [];
+    var count = 0;
+    let next, closed = structs::fields(sl, d) { text, fl =>
+        let c = find(text, ":");
+        let n = trim(if c >= 0 { text[..c] } else { text[..] });
+        if n.len > 0 {
+            if count < 12 { if count > 0 { names.append(", "); } names.append(n); }
+            else if count == 12 { names.append(", ..."); }
+            count += 1;
+        }
+    };
+    var whose: u8[>..] = [];
+    for v in vw::views { if v.ns == tns { format(whose, "views/", v.group, "/", v.name); } }
+    if whose.len == 0 { whose.append(src_path); }
+    format(out, whose, ": ", sname, " has no field \"", fname, "\" (", if count > 0 { "it has: " } else { "it has no fields" }, names, ")");
+    return out;
+}
+
+// A short excerpt of line around col (0-based bytes) and a caret under span bytes of it.
+fn caret_excerpt(out: u8[>..]&, line: const u8[:], col: i64, span: i64) {
+    let room = 40;
+    var a = max(col - room, 0);
+    while a > 0 && (line[a] & 0xC0) == 0x80 { a -= 1; }
+    var b = min(col + max(span, 1) + room, line.len);
+    while b < line.len && (line[b] & 0xC0) == 0x80 { b += 1; }
+    let pre = if a > 0 { "..." } else { "" };
+    format(out, pre, line[a..b], if b < line.len { "..." } else { "" }, "\n");
+    if a > 0 { out.append("   "); }
+    for c in line[a..col] { if c == '\t' { out.push('\t'); } else if (c & 0xC0) != 0x80 { out.push(' '); } }
+    out.push('^');
+    var n = 1;
+    while n < span { out.push('~'); n += 1; }
+    out.push('\n');
+}
+
 // The compiler's errors as gweb shows them (raw_errors: as goose printed them). Each error once, with its source
 // line, without the instantiation chain: a template error is in a generated function that goose excerpts whole
 // (one line), and a generic one is reported once per instantiation. GWEB_RAW_ERRORS=1 or --raw-errors shows it all.
@@ -316,26 +491,71 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
             skip = find(seen, key) >= 0;
             if skip { i += 1; continue; }
             seen.append(key[1..]);
-            format(out, line, "\n");
             i += 1;
-            // goose's excerpt of the line, and the caret under it
-            if i + 1 < lines.len && is_caret_line(lines[i + 1]) {
-                let shown = lines[i];
-                var src: u8[>..] = [];
-                var real: u8[>..] = [];
-                var have = false;
-                if ln > 0 && !starts_with(path, ".gweb/") && read_file(path, src) {
-                    let sl = split(src, '\n');
-                    if ln <= sl.len { real.append(sl[ln - 1]); have = true; }
-                }
-                if !have || real == shown {
-                    format(out, shown, "\n", lines[i + 1], "\n");
-                } else if with_source {
-                    // goose excerpted the generated line, and its column is that line's: show the source line, no caret.
-                    format(out, real[..min(real.len, 240)], if real.len > 240 { " ..." } else { "" }, "\n");
-                }
-                i += 2;
+            if !(i + 1 < lines.len && is_caret_line(lines[i + 1])) {
+                format(out, line, "\n");
+                continue;
             }
+            // goose's excerpt of the line, and the caret under it
+            let shown = lines[i];
+            let caret = lines[i + 1];
+            i += 2;
+            let c0 = find(caret, "^");
+            var span = 0;
+            while c0 + span < caret.len && (caret[c0 + span] == '^' || caret[c0 + span] == '~') { span += 1; }
+            let token = shown[min(c0, shown.len)..min(c0 + span, shown.len)];
+            let sev = if is_err { "error" } else { "warning" };
+            var src: u8[>..] = [];
+            var real: u8[>..] = [];
+            var have = false;
+            if ln > 0 && !starts_with(path, ".gweb/") && read_file(path, src) {
+                let sl = split(src, '\n');
+                if ln <= sl.len { real.append(sl[ln - 1]); have = true; }
+            }
+            // The generated line goose excerpted, and the caret's column in it.
+            var gen: u8[>..] = [];
+            if have { gen.append(gen_of(path)); }
+            var gcol = -1;
+            if gen.len > 0 {
+                var gpath: u8[>..] = [];
+                var code: u8[>..] = [];
+                format(gpath, gen_root, "/", gen);
+                if read_file(gpath, code) {
+                    let gl = split(code, '\n');
+                    if ln <= gl.len {
+                        let at = find(gl[ln - 1], shown);
+                        if at >= 0 { gcol = at + c0; }
+                    }
+                }
+            }
+            var better: u8[>..] = [];
+            if gcol >= 0 { better.append(field_msg(msg, gen, ln, gcol, token)); }
+            let text = if better.len > 0 { better[..] } else { msg[..] };
+            if !have || real == shown {
+                if better.len > 0 { format(out, path, ":", ln, ": ", sev, ": ", text, "\n"); } else { format(out, line, "\n"); }
+                format(out, shown, "\n", caret, "\n");
+                continue;
+            }
+            // A template: goose excerpted the generated line, so its column is that line's. The source column comes
+            // from srcmap.txt, else from finding the marked text in the source line.
+            var col = -1;
+            var exact = false;
+            if gcol >= 0 {
+                let sc, se = src_col(gen, ln, gcol);
+                col = sc;
+                exact = se;
+            }
+            if !exact && token.len > 0 {
+                let f = find(real, token);
+                if f >= 0 { col = f; exact = true; }
+            }
+            if col < 0 || col > real.len {
+                format(out, path, ":", ln, ": ", sev, ": ", text, "\n");
+                if with_source { format(out, real[..min(real.len, 120)], if real.len > 120 { " ..." } else { "" }, "\n"); }
+                continue;
+            }
+            format(out, path, ":", ln, ":", col + 1, ": ", sev, ": ", text, "\n");
+            if with_source { caret_excerpt(out, real, col, if exact { min(span, real.len - col) } else { 1 }); }
             continue;
         }
         if !skip && !(starts_with(line, "  in ") && find(line, " instantiated from ") >= 0) && !(line.len == 0 && i + 1 == lines.len) {
@@ -5421,7 +5641,9 @@ fn route_tests() -> bool {
     shq(cmd, mp);
     var out: u8[>..] = [];
     if c_run(cmd, out) != 0 {
-        write_stderr(rewrite_errors(out, cwd));
+        let mapped = rewrite_errors(out, cwd);
+        let shown: u8[>..] = if raw_errors { copy(mapped) } else { condense_errors(mapped, true) };
+        write_stderr(shown);
         write_stderr("gweb test: the route tests did not build\n");
         return false;
     }

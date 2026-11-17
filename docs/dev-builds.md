@@ -13,8 +13,13 @@
   changed (no hook ran) and gen writes what the last binary was built from, `gweb dev` restarts that binary (kept in
   `.gweb.dev/server`) without calling goose; open pages reload on the new `/__gweb/id`. A new or removed file, or an
   `@image()` whose size changed, changes the generated code and compiles.
-- **Errors once.** `build`, `start`, `export`, `dev` and `check` show each compiler error once with its source line,
-  without the instantiation chain or the generated code. `--raw-errors` or `GWEB_RAW_ERRORS=1` shows goose's output.
+- **Errors once.** `build`, `start`, `export`, `dev`, `check` and `test` show each compiler error once with its source
+  line, without the instantiation chain or the generated code. A template error is `file:line:col`, with an excerpt
+  of about 80 characters around the column and a caret (the column comes from `srcmap.txt`). goose's
+  `struct Props has no field x` names the struct: `app/page.goose: Props ...` or, for a view's,
+  `views/items/TeamMember: Props has no field "x" (it has: ...)`; gweb finds the receiver's type where the generated
+  code declares it (`props`, a `{#var}`, a `{#let}` of a struct literal). `--raw-errors` or `GWEB_RAW_ERRORS=1` shows
+  goose's output.
 
 Test: `test/devbuild.sh`.
 

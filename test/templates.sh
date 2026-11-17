@@ -204,7 +204,7 @@ else case "$out" in *"$want"*) ok ;; *) bad "wanted '$want', got:"; echo "$out" 
 rm -f "$WORK/f/public/site.$h.css"
 
 # A Goose error inside a tag reports the template's own line.
-expect_fail $P '{ctx.nope}' 2 "struct Ctx has no field nope"
+expect_fail $P '{ctx.nope}' 2:2 "struct Ctx has no field nope"
 
 # 3. Warnings: the build succeeds, stderr has the line, --strict fails. The case is on line 2 of the page.
 expect_warn() {

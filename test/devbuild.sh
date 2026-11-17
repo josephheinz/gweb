@@ -4,7 +4,8 @@
 #   GOOSE=/path/to/goose test/devbuild.sh
 #
 # 1. Compiler errors: each once, with its source line and no instantiation chain (page.html, a component, page.goose
-#    keeps goose's caret); --raw-errors and GWEB_RAW_ERRORS=1 show goose's own output; gweb check condenses too.
+#    keeps goose's caret); a template error has its column and a short excerpt; a missing field names its view's
+#    Props and fields; --raw-errors and GWEB_RAW_ERRORS=1 show goose's own output; gweb check and test condense too.
 # 2. gweb build --dev: unhashed URLs; a rebuild with nothing changed skips the C compile; the binary reads public/
 #    from disk, uncached.
 # 3. gweb dev: a change under public/ alone needs no compile and restarts the same binary (pages reload); a page
@@ -49,9 +50,11 @@ printf '<!doctype html>\n<h1>Hi {props.n}</h1>\n<p>{props.nosuch}</p>\n@Card(pro
 printf '<script goose>\nstruct State { n: i64 }\n</script>\n<b>{also_missing + s.n}</b>\n' > "$WORK/bad/components/Card.gshtml"
 out=$("$GWEB" -C "$WORK/bad" build 2>&1); rc=$?
 check "$([ "$rc" = 1 ] && echo ok)" "a template error fails gweb build (exit $rc)"
-check "$([ "$(count "$out" 'app/page.html:3: error: struct Props has no field nosuch')" = 1 ] && echo ok)" "the page.html error is shown once"
-check "$([ "$(count "$out" 'components/Card.gshtml:4: error: unknown identifier: also_missing')" = 1 ] && echo ok)" "the component error is shown once, at its .gshtml line"
-check "$(printf '%s\n' "$out" | grep -qxF '<p>{props.nosuch}</p>' && printf '%s\n' "$out" | grep -qxF '<b>{also_missing + s.n}</b>' && echo ok)" "each error is followed by its source line"
+check "$([ "$(count "$out" 'app/page.html:3:5: error: app/page.goose: Props has no field "nosuch" (it has: n, card)')" = 1 ] && echo ok)" \
+  "the page.html error is shown once, at its column, naming the Props and its fields"
+check "$([ "$(count "$out" 'components/Card.gshtml:4:5: error: unknown identifier: also_missing')" = 1 ] && echo ok)" "the component error is shown once, at its .gshtml line and column"
+check "$(printf '%s\n' "$out" | grep -A1 -xF '<p>{props.nosuch}</p>' | grep -qxF '    ^~~~~~~~~~~~' &&
+         printf '%s\n' "$out" | grep -A1 -xF '<b>{also_missing + s.n}</b>' | grep -qxF '    ^~~~~~~~~~~~' && echo ok)" "each error is followed by its source line and a caret"
 check "$(! printf '%s\n' "$out" | grep -qF 'instantiated from' && ! printf '%s\n' "$out" | grep -qF 'out.append(' && echo ok)" "no instantiation chain and no generated code"
 check "$(! printf '%s\n' "$out" | grep -qF ' | ' && echo ok)" "no numbered excerpt (errors.txt has those)"
 [ "$fail" = 0 ] || show "$out"
@@ -61,10 +64,34 @@ check "$([ "$(count "$raw" 'app/page.html:3: error:')" -gt 1 ] && echo ok)" "--r
 raw2=$(GWEB_RAW_ERRORS=1 "$GWEB" -C "$WORK/bad" build 2>&1)
 check "$(printf '%s\n' "$raw2" | grep -qF 'instantiated from' && echo ok)" "GWEB_RAW_ERRORS=1 shows goose's whole output"
 out=$("$GWEB" -C "$WORK/bad" check 2>&1)
-check "$([ "$(count "$out" 'app/page.html:3: error:')" = 1 ] && ! printf '%s\n' "$out" | grep -qF 'instantiated from' && echo ok)" "gweb check condenses as build does"
+check "$([ "$(count "$out" 'app/page.html:3:5: error:')" = 1 ] && ! printf '%s\n' "$out" | grep -qF 'instantiated from' && echo ok)" "gweb check condenses as build does"
 "$GWEB" -C "$WORK/bad" dev --once >/dev/null 2>&1
-check "$([ "$(grep -c '^app/page.html:3: error:' "$WORK/bad/.gweb.dev/errors.txt")" = 1 ] && grep -qF '>   3 | <p>{props.nosuch}</p>' "$WORK/bad/.gweb.dev/errors.txt" && echo ok)" \
+check "$([ "$(grep -c '^app/page.html:3:5: error:' "$WORK/bad/.gweb.dev/errors.txt")" = 1 ] && grep -qF '>   3 | <p>{props.nosuch}</p>' "$WORK/bad/.gweb.dev/errors.txt" && echo ok)" \
   "dev --once: errors.txt has each error once, with its excerpt"
+# A long template line: an excerpt around the column, not the whole line.
+fresh long
+pad=$(printf 'word %.0s' $(seq 1 30))
+printf '<!doctype html>\n<p>%s{props.nosuch}%s</p>\n' "$pad" "$pad" > "$WORK/long/app/page.html"
+out=$("$GWEB" -C "$WORK/long" build 2>&1)
+src=$(printf '%s\n' "$out" | sed -n 2p)
+car=$(printf '%s\n' "$out" | sed -n 3p)
+at_src=$(awk -v s="$src" 'BEGIN { print index(s, "props.nosuch") }')
+at_car=$(awk -v s="$car" 'BEGIN { print index(s, "^") }')
+check "$(printf '%s\n' "$out" | grep -qF 'app/page.html:2:155: error: ' && [ "${#src}" -lt 100 ] && printf '%s' "$src" | grep -q '^\.\.\..*\.\.\.$' &&
+         [ "$at_src" -gt 0 ] && [ "$at_src" = "$at_car" ] && [ "$(printf '%s' "$car" | tr -d ' ')" = '^~~~~~~~~~~~' ] && echo ok)" \
+  "a long line is shown as a short excerpt, the caret under the column"
+[ "$fail" = 0 ] || show "$out"
+# Another view's Props: the view is named, with its fields.
+rm -rf "$WORK/views"; cp -R "$HERE/views/site" "$WORK/views"
+printf '{#var a = v_widgets_Hero::Props { .. }}<p>By {a.titel}</p>\n<div class="text">@gweb::markdown(props.body)</div>\n' > "$WORK/views/views/widgets/Text.html"
+out=$("$GWEB" -C "$WORK/views" test 2>&1)
+check "$(printf '%s\n' "$out" | grep -qxF 'views/widgets/Text.html:1:47: error: views/widgets/Hero: Props has no field "titel" (it has: title, count, shout, badge, more, ctas)' &&
+         ! printf '%s\n' "$out" | grep -qF 'instantiated from' && echo ok)" "another view's Props is named, with its fields (gweb test condenses too)"
+printf '<div class="text">{props.bdy}</div>\n' > "$WORK/views/views/widgets/Text.html"
+out=$("$GWEB" -C "$WORK/views" test 2>&1)
+check "$(printf '%s\n' "$out" | grep -qxF 'views/widgets/Text.html:1:20: error: views/widgets/Text: Props has no field "bdy" (it has: body)' && echo ok)" \
+  "the view's own props too"
+[ "$fail" = 0 ] || show "$out"
 # A .goose error: goose's excerpt is the source line, so its caret stays.
 fresh goose
 sed 's/n: 1,/n: 1 + "x",/' "$HERE/devbuild/site/app/page.goose" > "$WORK/goose/app/page.goose"
