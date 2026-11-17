@@ -1,0 +1,5 @@
+../pkg
+run hello echo hello
+run greet echo app greet
+run fail exit 3
+hook content,public/style.css echo app >> hook.log

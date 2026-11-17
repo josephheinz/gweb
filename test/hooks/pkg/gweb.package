@@ -1,0 +1,8 @@
+# A package with a tool, two commands and a hook (DESIGN-ADDENDUM-21).
+name hk
+gweb 1.2
+package kv ./kv
+tool hk cli/hk.goose
+run check hk check
+run greet echo package greet
+hook content hk check

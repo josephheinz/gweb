@@ -14,6 +14,11 @@ cd gweb && goose build -o gweb cli/gweb.goose
 ln -s "$PWD/gweb" ~/bin/gweb           # or: cp gweb ~/bin/
 ```
 
+`gweb update` moves the checkout to the latest release (or `gweb update v1.3.0`), with `goose-net` and
+`goose-sqlite` beside it, rebuilds `gweb` and links it beside `goose` on `PATH` (`~/.local/bin`, or
+`$GWEB_BIN_DIR`). It refuses a checkout with changes, and changes nothing when the network or a tag is missing.
+A checkout past the release (a branch with newer commits) is left as it is and only rebuilt.
+
 ```
 gweb new mysite && cd mysite
 GOOSE=/path/to/goose gweb dev          # http://localhost:60053, rebuilds and restarts on every change
@@ -60,7 +65,7 @@ goose-architect agent.
 | `app/jobs.goose` | Background jobs: `enum Job`, `fn run`, optional `fn schedule` |
 | `app/config.goose` | Optional `fn check() -> bool`, run before the server listens |
 | `stores/<Name>.gshtml` | A shared client store for components (see Components) |
-| `gweb.packages` | The packages this project uses, one source per line, `at /prefix` to mount (see Packages) |
+| `gweb.packages` | The packages this project uses, one source per line, `at /prefix` to mount (see Packages); `tool`, `run` and `hook` lines (see Commands and hooks) |
 | `gweb.package` | In a package: `name IDENT` and `gweb VERSION`, the lowest gweb it needs (`gweb 1.0` accepts any 1.x) |
 | `views/<group>/<Name>.goose` and `.html` | A view: `struct Props` and its template; gweb generates a JSON codec, an admin form and a by-name registry (see Views) |
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
@@ -326,6 +331,8 @@ gweb routes                  the route table (GET,POST and a frag line for each 
 gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gweb.test/; leaves .gweb/ alone)
 gweb check                   goose check on a copy of the site; errors name .gshtml and page.html lines
 gweb lsp                     language server for .gshtml and templates (needs node)
+gweb run [NAME [args]]       a command from gweb.packages or a package (none: the list)
+gweb update [TAG]            the checkout to the latest release (or TAG), rebuilt and linked on PATH
 gweb version                 the gweb version and the package sources it declares (also gweb --version)
 gweb help                    the usage (also gweb --help, gweb -h and gweb COMMAND --help); exit 0
 ```
@@ -376,8 +383,9 @@ Warning codes:
 | `state-unused` | a `@state` nothing reads |
 
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
-package beside its own binary (or `$GWEB_HOME`). A checkout older than
-the binary, or newer, stops with "rebuild gweb". Build `gweb` with:
+package beside its own binary (or `$GWEB_HOME`). When the checkout differs from
+what the binary was built from, every command first prints
+`gweb is older than its source in DIR: run gweb update (or goose build -o gweb cli/gweb.goose)`. Build `gweb` with:
 
 ```
 goose build -o gweb cli/gweb.goose
@@ -555,6 +563,22 @@ var login: u8[>..] = [];
 format(login, cms::MOUNT, "/login");
 return gweb::require_login(req, ctx, res, login);
 ```
+
+## Commands and hooks
+
+`gweb.packages`, and a package's `gweb.package`, take three more lines:
+
+```
+tool cms cli/cms.goose       a Goose program in this folder, built into .gweb.tools/bin/cms
+run check cms check          gweb run check [args]
+hook views cms check         before gweb build, start, export and dev, when views/ changed
+```
+
+Commands run in the app's folder with `.gweb.tools/bin` first on `PATH`, and `GWEB_APP`, `GWEB_PKG_DIR` and `GWEB`
+set. A hook's paths are the app's, split by commas. `gweb dev` runs every hook before its first build, then those whose
+paths changed. A failing hook stops the build like a compile error. `--no-hooks` or `GWEB_HOOKS=0` skips them. The
+app's command wins over a package's of the same name. A package tool's `import X from "..."` lines get the app's
+sources. See [docs/site/packages.md](docs/site/packages.md#commands-and-hooks).
 
 ## How it runs
 

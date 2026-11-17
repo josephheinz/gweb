@@ -144,14 +144,18 @@ static int stamp_one(const char *path, const struct stat *sb, int flag, struct F
 }
 
 /* Adds the number of entries under path to count and returns the newest
-   mtime in nanoseconds (0 when path is missing). Follows symlinks. */
+   mtime in nanoseconds (0 when path is missing). Follows symlinks. A file
+   counts as one entry (nftw refuses a file on macOS). */
 int64_t gweb_tree_stamp(gweb_bytes path, int64_t *count) {
     char *p = cstr(path);
     if (!p) return 0;
     stamp_count = 0;
     stamp_newest = 0;
     struct stat st;
-    if (stat(p, &st) == 0) nftw(p, stamp_one, 32, 0);
+    if (stat(p, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) nftw(p, stamp_one, 32, 0);
+        else stamp_one(p, &st, FTW_F, NULL);
+    }
     free(p);
     *count += stamp_count;
     return stamp_newest;

@@ -6,6 +6,8 @@
 //   gweb [-C dir] start [--no-minify] [server flags...]
 //   gweb [-C dir] dev [server flags...]
 //   gweb [-C dir] test | check | lsp
+//   gweb [-C dir] run [NAME [args...]]     (tools, commands and hooks: DESIGN-ADDENDUM-21)
+//   gweb update [TAG]
 //   gweb version
 //
 // gen, build, start and test also take --strict (any warning fails the run) and
@@ -815,8 +817,11 @@ fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&, base: co
             var w: u8[>..] = [];
             format(w, path, ":", i + 1);
             if parse_goose_pkg(path, i + 1, val, base, w, gp) { reqs.push(gp); } else { good = false; }
+        } else if ext_kind(t) > 0 {
+            // tool, run and hook lines are added once the package is accepted (load_packages).
+            if !ext_line(path, i + 1, t, base, "", false, false) { good = false; }
         } else {
-            err(path, i + 1, "a line is `name IDENT`, `gweb VERSION` or `package NAME SOURCE`");
+            err(path, i + 1, "a line is `name IDENT`, `gweb VERSION`, `package NAME SOURCE`, `tool NAME FILE`, `run NAME COMMAND` or `hook PATHS COMMAND`");
             good = false;
         }
     }
@@ -849,6 +854,9 @@ fn clean_path(p: const u8[:], out: u8[>..]&) {
 fn load_packages() {
     pkgs.clear();
     goose_pkgs.clear();
+    tools.clear();
+    cmds.clear();
+    hooks.clear();
     if !file_exists(PKG_LIST) { return; }
     var text: u8[>..] = [];
     if !read(PKG_LIST, text) { return; }
@@ -866,6 +874,8 @@ fn load_packages() {
             if parse_goose_pkg(PKG_LIST, ln, trim(t[8..]), cwd, w, gp) { add_goose_pkg(PKG_LIST, ln, gp); }
             continue;
         }
+        // tool, run and hook lines of the app (DESIGN-ADDENDUM-21). `run at /x` is still a folder named run, mounted.
+        if ext_kind(t) > 0 { ext_line(PKG_LIST, ln, t, cwd, "", false, true); continue; }
         var source: u8[>..] = [];
         var prefix: u8[>..] = [];
         let at = find(t, " at ");
@@ -951,6 +961,10 @@ fn load_packages() {
         }
         if m.len > 0 { continue; }
         pkgs.push(pk);
+        for mraw, mi in split(mtext, '\n') {
+            let mt = trim(mraw);
+            if ext_kind(mt) > 0 { ext_line(manifest, mi + 1, mt, dir, pk.name, pk.git, true); }
+        }
         // What the package needs. The origin names the package, so a conflict says who asked for which version.
         for r in reqs {
             var rr = GoosePkg { name: "", source: "", origin: "" };
@@ -984,6 +998,408 @@ fn check_nested_mounts() {
             err(PKG_LIST, b.line, m);
         }
     }
+}
+
+// ---------------------------------------------------------------- tools, commands and hooks (DESIGN-ADDENDUM-21)
+
+// `tool NAME FILE`, `run NAME COMMAND` and `hook PATHS COMMAND`, in gweb.packages (the app's) or a package's
+// gweb.package. pkg is the package's name, "" for the app; dir its folder (the app's, for the app).
+struct Tool { name: u8[..64], file: u8[..512], dir: u8[..512], pkg: u8[..64], git: bool, path: u8[..512], line: i64 }
+struct Cmd { name: u8[..64], text: u8[..2048], dir: u8[..512], pkg: u8[..64], path: u8[..512], line: i64 }
+struct Hook { watch: u8[..512], text: u8[..2048], dir: u8[..512], pkg: u8[..64], path: u8[..512], line: i64 }
+
+var tools: Tool[>..<];
+var cmds: Cmd[>..<];
+var hooks: Hook[>..<];
+var hook_keys: u8[..3200][>..<];       // gweb dev: each hook that ran, and the stamp of its paths then
+var hook_seen: i64[>..<];
+var no_hooks = false;                  // --no-hooks or GWEB_HOOKS=0
+var hooks_changed_only = false;        // gweb dev after its first build: only hooks whose paths changed
+var hooks_ran = false;                 // the last run_hooks ran one; hook_stamp is stamp() after it
+var hook_stamp: i64 = 0;
+var self_bin: u8[>..];                 // this binary, absolute, for $GWEB
+let TOOLS_DIR = ".gweb.tools";
+
+// 1 tool, 2 run, 3 hook, 0 another line. `run`, `run at /x` and the like stay folder names, as package lines do.
+fn ext_kind(t: const u8[:]) -> i64 {
+    let keys = ["tool", "run", "hook"];
+    for k, ki in keys {
+        if t.len <= k.len + 1 || !starts_with(t, k) || (t[k.len] != ' ' && t[k.len] != '\t') { continue; }
+        let rest = trim(t[k.len + 1..]);
+        if rest == "at" || starts_with(rest, "at ") { return 0; }
+        return ki + 1;
+    }
+    return 0;
+}
+
+// A tool or command name: a word a shell and a file name take as is.
+fn ext_name_ok(s: const u8[:]) -> bool {
+    if s.len == 0 || s.len > 64 || s[0] == '-' || s[0] == '.' { return false; }
+    for c in s {
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+        if !ok { return false; }
+    }
+    return true;
+}
+
+// A path below a folder: not absolute, no empty or .. segment.
+fn below_ok(s: const u8[:]) -> bool {
+    if s.len == 0 || s.len >= 400 || s[0] == '/' || find(s, "\\") >= 0 { return false; }
+    for seg in split(s, '/') { if seg == ".." { return false; } }
+    return true;
+}
+
+// Checks one tool, run or hook line; with add, records it. dir is the folder FILE is relative to.
+fn ext_line(path_in: const u8[:], ln: i64, t: const u8[:], dir_in: const u8[:], pkg: const u8[:], git: bool, add: bool) -> bool {
+    let kind = ext_kind(t);
+    let key = if kind == 1 { "tool" } else if kind == 2 { "run" } else { "hook" };
+    var cdir: u8[>..] = [];
+    clean_path(dir_in, cdir);
+    let dir = cdir[..];
+    var cpath: u8[>..] = [];
+    if path_in.len > 0 && path_in[0] == '/' { clean_path(path_in, cpath); } else { cpath.append(path_in); }
+    let path = cpath[..];
+    let val = trim(t[key.len + 1..]);
+    var sp = -1;
+    for c, i in val { if sp < 0 && (c == ' ' || c == '\t') { sp = i; } }
+    let first = if sp < 0 { val } else { val[..sp] };
+    let rest = if sp < 0 { "" } else { trim(val[sp + 1..]) };
+    var m: u8[>..] = [];
+    if kind == 1 {
+        if !ext_name_ok(first) || rest.len == 0 || find(rest, " ") >= 0 || !ends_with(rest, ".goose") || !below_ok(rest) {
+            err(path, ln, "a line is `tool NAME FILE.goose`, as in tool cms cli/cms.goose; FILE is in this folder");
+            return false;
+        }
+        var f: u8[>..] = [];
+        format(f, dir, "/", rest);
+        if !file_exists(f) { format(m, "tool ", first, ": no ", f); err(path, ln, m); return false; }
+        if !add { return true; }
+        for o in tools {
+            if o.name == first {
+                format(m, "tool ", first, ": also declared at ", o.path, ":", o.line, "; rename one");
+                err(path, ln, m);
+                return false;
+            }
+        }
+        var x = Tool { name: "", file: "", dir: "", pkg: "", git: git, path: "", line: ln };
+        x.name.append(first);
+        x.file.append(rest);
+        x.dir.append(dir[..min(dir.len, 511)]);
+        x.pkg.append(pkg);
+        x.path.append(path[..min(path.len, 511)]);
+        tools.push(x);
+        return true;
+    }
+    if kind == 2 {
+        if !ext_name_ok(first) || rest.len == 0 { err(path, ln, "a line is `run NAME COMMAND`, as in run check cms check"); return false; }
+        if rest.len >= 2048 { err(path, ln, "the command is longer than 2047 bytes"); return false; }
+        if !add { return true; }
+        var x = Cmd { name: "", text: "", dir: "", pkg: "", path: "", line: ln };
+        x.name.append(first);
+        x.text.append(rest);
+        x.dir.append(dir[..min(dir.len, 511)]);
+        x.pkg.append(pkg);
+        x.path.append(path[..min(path.len, 511)]);
+        cmds.push(x);
+        return true;
+    }
+    var paths_ok = first.len > 0 && first.len < 512 && rest.len > 0;
+    for p in split(first, ',') { if !below_ok(p) || starts_with(p, ".gweb") { paths_ok = false; } }
+    if !paths_ok {
+        err(path, ln, "a line is `hook PATHS COMMAND`: PATHS is folders or files of the app, split by commas, as in hook views cms check");
+        return false;
+    }
+    if rest.len >= 2048 { err(path, ln, "the command is longer than 2047 bytes"); return false; }
+    if !add { return true; }
+    var x = Hook { watch: "", text: "", dir: "", pkg: "", path: "", line: ln };
+    x.watch.append(first);
+    x.text.append(rest);
+    x.dir.append(dir[..min(dir.len, 511)]);
+    x.pkg.append(pkg);
+    x.path.append(path[..min(path.len, 511)]);
+    hooks.push(x);
+    return true;
+}
+
+// The stamp of a hook's paths, relative to the app.
+fn watch_stamp(watch: const u8[:]) -> i64 {
+    var count = 0;
+    var newest = 0;
+    for p in split(watch, ',') { if p.len > 0 { newest = max(newest, c_tree_stamp(p, count)); } }
+    return newest * 31 + count;
+}
+
+// A word of a shell command, split at blanks and ; & | ( ) < > ` " '.
+fn names_word(text: const u8[:], word: const u8[:]) -> bool {
+    var start = 0;
+    var i = 0;
+    while i <= text.len {
+        let end = i == text.len || text[i] == ' ' || text[i] == '\t' || text[i] == '\n' || text[i] == ';' || text[i] == '&' ||
+                  text[i] == '|' || text[i] == '(' || text[i] == ')' || text[i] == '<' || text[i] == '>' || text[i] == '`' ||
+                  text[i] == '"' || text[i] == '\'';
+        if end {
+            if i > start && text[start..i] == word { return true; }
+            start = i + 1;
+        }
+        i += 1;
+    }
+    return false;
+}
+
+// The lines a command starts with: tools on PATH, and where it runs.
+fn ext_env(out: u8[>..]&, dir: const u8[:]) {
+    var cwd: u8[>..] = [];
+    c_cwd(cwd);
+    var bin: u8[>..] = [];
+    format(bin, cwd, "/", TOOLS_DIR, "/bin");
+    out.append("export PATH=");
+    shq(out, bin);
+    out.append(":\"$PATH\" GWEB_APP=");
+    shq(out, cwd);
+    out.append(" GWEB_PKG_DIR=");
+    shq(out, dir);
+    out.append(" GWEB=");
+    shq(out, self_bin);
+    out.push('\n');
+}
+
+// The tool's root with each `import NAME from "SOURCE";` pointed where the app's build points it: gweb, net, sqlite
+// and the Goose packages get the app's sources, and any other relative source is made absolute (from dir).
+fn tool_root(src: const u8[:], dir: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let lines = split(src, '\n');
+    for line, li in lines {
+        if li > 0 { out.push('\n'); }
+        let t = trim(line);
+        let fr = find(t, " from \"");
+        if !starts_with(t, "import ") || fr < 0 { out.append(line); continue; }
+        let name = trim(t[7..fr]);
+        let q1 = fr + 7;
+        let q2 = q1 + find(t[q1..], "\"");
+        if q2 < q1 { out.append(line); continue; }
+        let source = t[q1..q2];
+        var to: u8[>..] = [];
+        if name == "gweb" { to.append(pkg_source(0)); }
+        else if name == "net" { to.append(pkg_source(1)); }
+        else if name == "sqlite" { to.append(pkg_source(2)); }
+        else {
+            for g in goose_pkgs { if g.name == name { to.append(g.source); } }
+            if to.len == 0 && source.len > 0 && source[0] != '/' && !is_git_source(source) {
+                var abs: u8[>..] = [];
+                format(abs, dir, "/", source);
+                clean_path(abs, to);
+            }
+        }
+        if to.len == 0 { out.append(line); continue; }
+        format(out, "import ", name, " from \"");
+        lit(out, to);
+        out.append(t[q2..]);
+    }
+    return out;
+}
+
+fn mkdir_p(dir: const u8[:]) {
+    var cmd: u8[>..] = [];
+    var out: u8[>..] = [];
+    cmd.append("mkdir -p ");
+    shq(cmd, dir);
+    c_run(cmd, out);
+}
+
+// A package tool builds from dst, a tree of links to the package's files with the root rewritten (tool_root), so
+// the package folder (a cached tag, or a checkout) is never written to, and relative embeds and imports still resolve.
+fn tool_tree(pkg_dir: const u8[:], file: const u8[:], dst: const u8[:], root: const u8[:]) {
+    c_remove_tree(dst);
+    mkdir_p(dst);
+    var s: u8[>..] = [];
+    var d: u8[>..] = [];
+    s.append(pkg_dir);
+    d.append(dst);
+    let parts = split(file, '/');
+    for part, k in parts {
+        var names: u8[>..] = [];
+        list_dir(s, names);
+        for n in split(names, '\n') {
+            if n.len == 0 || n == part { continue; }
+            var a: u8[>..] = [];
+            var b: u8[>..] = [];
+            format(a, s, "/", n);
+            format(b, d, "/", n);
+            c_symlink(a, b);
+        }
+        if k + 1 < parts.len {
+            format(s, "/", part);
+            format(d, "/", part);
+            make_dir(d);
+        } else {
+            var f: u8[>..] = [];
+            format(f, d, "/", part);
+            write_file(f, root);
+        }
+    }
+}
+
+// Builds .gweb.tools/bin/NAME when it is missing or its sources changed. A git package is a fixed tag, so only
+// the root decides; a path package or the app is stamped by its folder.
+fn ensure_tool(t: const Tool&) -> bool {
+    var cwd: u8[>..] = [];
+    c_cwd(cwd);
+    var bin: u8[>..] = [];
+    var keyf: u8[>..] = [];
+    format(bin, cwd, "/", TOOLS_DIR, "/bin/", t.name);
+    format(keyf, TOOLS_DIR, "/", t.name, ".key");
+    var orig: u8[>..] = [];
+    format(orig, t.dir, "/", t.file);
+    var src: u8[>..] = [];
+    if !read_file(orig, src) { var m: u8[>..] = []; format(m, "tool ", t.name, ": cannot read ", orig); err(t.path, t.line, m); return false; }
+    let fdir = orig[..rfind(orig, "/")];
+    let root = if t.pkg.len > 0 { tool_root(src, fdir) } else { copy(src) };
+    var count = 0;
+    let st = if t.git { 0 } else { c_tree_stamp(if t.pkg.len > 0 { t.dir[..] } else { fdir }, count) };
+    var key: u8[>..] = [];
+    format(key, trim(EMBEDDED_VERSION), "\n", orig, "\n", st, " ", count, "\n", root);
+    var have: u8[>..] = [];
+    if file_exists(bin) && read_file(keyf, have) && have == key { return true; }
+    var bdir: u8[>..] = [];
+    format(bdir, TOOLS_DIR, "/bin");
+    mkdir_p(bdir);
+    var main_path: u8[>..] = [];
+    if t.pkg.len > 0 {
+        var tree: u8[>..] = [];
+        format(tree, cwd, "/", TOOLS_DIR, "/src/", t.name);
+        tool_tree(t.dir, t.file, tree, root);
+        format(main_path, tree, "/", t.file);
+    } else {
+        main_path.append(orig);
+    }
+    var msg: u8[>..] = [];
+    format(msg, "gweb: building tool ", t.name, " from ", orig, "\n");
+    write_stdout(msg);
+    var cmd: u8[>..] = [];
+    goose_cmd(cmd);
+    cmd.append(" build --color never -o ");
+    shq(cmd, bin);
+    cmd.push(' ');
+    shq(cmd, main_path);
+    var out: u8[>..] = [];
+    if c_run(cmd, out) != 0 {
+        if out.len > 0 { write_stderr(out); note_errors(out); }
+        var m: u8[>..] = [];
+        format(m, "tool ", t.name, ": goose build failed");
+        err(t.path, t.line, m);
+        return false;
+    }
+    write_file(keyf, key);
+    return true;
+}
+
+// Builds the tools a command names.
+fn ensure_tools(text: const u8[:]) -> bool {
+    for t in tools { if names_word(text, t.name) && !ensure_tool(t) { return false; } }
+    return true;
+}
+
+fn run_hook(h: const Hook&) -> bool {
+    if !ensure_tools(h.text) { return false; }
+    var script: u8[>..] = [];
+    script.append("(\n");
+    ext_env(script, h.dir);
+    format(script, h.text, "\n)");
+    var msg: u8[>..] = [];
+    format(msg, "gweb: hook ", h.text, "\n");
+    write_stdout(msg);
+    var out: u8[>..] = [];
+    let status = c_run(script, out);
+    if status == 0 { write_stdout(out); return true; }
+    if json_diag { if out.len > 0 { say_error(trim(out)); } } else { write_stderr(out); }
+    note_errors(out);
+    var m: u8[>..] = [];
+    format(m, "hook `", h.text, "` failed (exit ", status, ")");
+    err(h.path, h.line, m);
+    return false;
+}
+
+// Runs the hooks before a build: the packages' in gweb.packages order, then the app's. With hooks_changed_only, only
+// those whose paths changed since they last passed. False after a failure, which is reported like a compile error.
+fn run_hooks() -> bool {
+    hooks_ran = false;
+    if no_hooks { return true; }
+    errors = 0;
+    load_packages();
+    if errors > 0 { return false; }
+    for pass in 2 {
+        for h in hooks {
+            if (pass == 0) != (h.pkg.len > 0) { continue; }
+            var key: u8[..3200] = "";
+            key.append(h.path);
+            key.push(':');
+            var n: u8[>..] = [];
+            format(n, h.line, "\t", h.watch, "\t", h.text[..min(h.text.len, 2048)]);
+            key.append(n[..min(n.len, 3200 - key.len)]);
+            var at = -1;
+            for k, ki in hook_keys { if k == key { at = ki; } }
+            if hooks_changed_only && at >= 0 && hook_seen[at] == watch_stamp(h.watch) { continue; }
+            hooks_ran = true;
+            if !run_hook(h) { return false; }
+            // Taken after the hook, which may write under its own paths.
+            let st = watch_stamp(h.watch);
+            if at >= 0 { hook_seen[at] = st; } else { hook_keys.push(key); hook_seen.push(st); }
+        }
+    }
+    if hooks_ran { hook_stamp = stamp(); }
+    return true;
+}
+
+// gweb run: the app's command of that name, else the one package that has it.
+fn run_cmd(rest: u8[:][:]) {
+    errors = 0;
+    load_packages();
+    if errors > 0 { exit(1); }
+    if rest.len == 0 {
+        var out: u8[>..] = [];
+        for pass in 2 { for c in cmds {
+            if (pass == 0) != (c.pkg.len == 0) { continue; }
+            format(out, c.name, "  ", c.text, "  (", if c.pkg.len > 0 { "package " } else { "" }, c.pkg, if c.pkg.len > 0 { ", " } else { "" },
+                   c.path, ":", c.line, ")\n");
+        } }
+        if out.len == 0 { out.append("gweb run: no commands; add `run NAME COMMAND` to gweb.packages\n"); }
+        write_stdout(out);
+        return;
+    }
+    let name = rest[0];
+    var pick = -1;
+    var m: u8[>..] = [];
+    for c, ci in cmds { if c.name == name && c.pkg.len == 0 { pick = ci; } }
+    if pick < 0 {
+        for c, ci in cmds {
+            if c.name != name { continue; }
+            if pick >= 0 {
+                format(m, "run ", name, ": declared by package ", cmds[pick].pkg, " and package ", c.pkg,
+                       "; add `run ", name, " COMMAND` to gweb.packages to choose");
+                err(c.path, c.line, m);
+                exit(1);
+            }
+            pick = ci;
+        }
+    }
+    if pick < 0 {
+        format(m, "gweb run: no command ", name, " (gweb run lists them)");
+        say_error(m);
+        exit(1);
+    }
+    let c = cmds[pick];
+    if !ensure_tools(c.text) { exit(1); }
+    var script: u8[>..] = [];
+    ext_env(script, c.dir);
+    format(script, c.text, " \"$@\"");
+    var cmd: u8[>..] = [];
+    cmd.append("/bin/sh -c ");
+    shq(cmd, script);
+    cmd.append(" gweb-run");
+    for a in rest[1..] { cmd.push(' '); shq(cmd, a); }
+    c_exec(cmd);
+    say_error("gweb run: could not start /bin/sh");
+    exit(1);
 }
 
 // ---------------------------------------------------------------- scan
@@ -3783,19 +4199,27 @@ fn print_version() {
     write_stdout(out);
 }
 
-fn check_version() {
-    let home = gweb_home();
-    if home.len == 0 { return; }
-    var path: u8[>..] = [];
-    format(path, home, "/VERSION");
-    var file: u8[>..] = [];
-    read(path, file);
-    if trim(file) != trim(EMBEDDED_VERSION) {
-        var msg: u8[>..] = [];
-        format(msg, "gweb: built from ", trim(EMBEDDED_VERSION), ", but ", home, " is ", trim(file), ": rebuild gweb\n");
-        write_stderr(msg);
-        exit(1);
+// The checkout gweb was built from, checked against the copies embedded in it (SELF_FILES, below main's helpers).
+// A difference prints one line and the command goes on: a stale binary otherwise shows as compile errors.
+fn stale_home() -> u8[>..] {
+    var home = gweb_home();
+    if home.len == 0 { return home; }
+    for f, i in SELF_FILES {
+        var path: u8[>..] = [];
+        format(path, home, "/", f);
+        var disk: u8[>..] = [];
+        if !read_file(path, disk) || disk != SELF_DATA[i] { return home; }
     }
+    home.clear();
+    return home;
+}
+
+fn warn_stale() {
+    let home = stale_home();
+    if home.len == 0 { return; }
+    var msg: u8[>..] = [];
+    format(msg, "gweb is older than its source in ", home, ": run gweb update (or goose build -o gweb cli/gweb.goose)\n");
+    write_stderr(msg);
 }
 
 // ---------------------------------------------------------------- CSS minification
@@ -4527,6 +4951,7 @@ fn build(debug: bool, dev: bool) -> bool {
     last_errors.clear();
     last_warnings.clear();
     warnings = 0;
+    if !run_hooks() { return false; }
     if !gen(dev, BUILD_DIR) { return false; }
     var cwd: u8[>..] = [];
     c_cwd(cwd);
@@ -5138,7 +5563,7 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
     var skip = false;
     for a in extra {
         if skip { skip = false; continue; }
-        if a == "--strict" || a == "--no-minify" { continue; }
+        if a == "--strict" || a == "--no-minify" || a == "--no-hooks" { continue; }
         if a == "--diagnostics" { skip = true; continue; }
         cmd.push(' ');
         shq(cmd, a);
@@ -5159,6 +5584,8 @@ fn stamp() -> i64 {
             newest = max(newest, c_tree_stamp(dir, count));
         }
     }
+    // A hook may watch a path outside those folders.
+    for h in hooks { for p in split(h.watch, ',') { if p.len > 0 { newest = max(newest, c_tree_stamp(p, count)); } } }
     return newest * 31 + count;
 }
 
@@ -5226,6 +5653,7 @@ fn dev(extra: u8[:][:]) {
     write_dev_errors("");
     write_dev_warnings("");
     let first_ok = build(false, true);
+    hooks_changed_only = true;
     write_dev_warnings(last_warnings);
     if first_ok {
         pid = c_spawn(server_cmd(extra, true));
@@ -5233,7 +5661,7 @@ fn dev(extra: u8[:][:]) {
         write_dev_errors(excerpts(last_errors));
         write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/, components/ and stores/\n");
     }
-    if pkgs.len > 0 { last = stamp(); }     // the package folders were not known before the first build
+    if pkgs.len > 0 || hooks.len > 0 { last = stamp(); }     // the package folders and hooks were not known before the first build
     loop {
         sleep_ms(250);
         if pid > 0 && c_wait(pid, 0) != -2 {
@@ -5246,6 +5674,7 @@ fn dev(extra: u8[:][:]) {
         last = stamp();
         write_stdout("gweb dev: change seen, rebuilding\n");
         let built = build(false, true);
+        if hooks_ran { last = hook_stamp; }      // what a hook wrote is not a change
         write_dev_warnings(last_warnings);
         if !built {
             write_dev_errors(excerpts(last_errors));
@@ -5258,10 +5687,281 @@ fn dev(extra: u8[:][:]) {
     }
 }
 
+// ---------------------------------------------------------------- update
+
+// gweb update [TAG]: the checkout beside this binary, and goose-net and goose-sqlite beside it, to the latest release
+// tag (or TAG), then a rebuild and a link on PATH. Refuses changed checkouts; changes nothing it cannot finish.
+fn git_in(dir: const u8[:], args: const u8[:], out: u8[>..]&) -> i32 {
+    var cmd: u8[>..] = [];
+    cmd.append("git -C ");
+    shq(cmd, dir);
+    format(cmd, " ", args);
+    out.clear();
+    return c_run(cmd, out);
+}
+
+fn first_line(s: const u8[:]) -> const u8[:] {
+    let t = trim(s);
+    let nl = find(t, "\n");
+    return if nl >= 0 { t[..nl] } else { t };
+}
+
+fn update_fail(msg: const u8[:]) {
+    var m: u8[>..] = [];
+    format(m, "gweb update: ", msg, "\n");
+    write_stderr(m);
+    exit(1);
+}
+
+fn update_say(msg: const u8[:]) {
+    var m: u8[>..] = [];
+    format(m, "gweb update: ", msg, "\n");
+    write_stdout(m);
+}
+
+// A is an ancestor of B (or the same commit). False when the history to tell is not there (a shallow clone).
+fn git_ancestor(dir: const u8[:], a: const u8[:], b: const u8[:]) -> bool {
+    var args: u8[>..] = [];
+    args.append("merge-base --is-ancestor ");
+    shq(args, a);
+    args.push(' ');
+    shq(args, b);
+    var out: u8[>..] = [];
+    return git_in(dir, args, out) == 0;
+}
+
+// The folder for the gweb link: $GWEB_BIN_DIR, else the folder of goose on PATH, else ~/.local/bin.
+fn bin_dir() -> u8[>..] {
+    var d: u8[>..] = [];
+    if env("GWEB_BIN_DIR", d) && d.len > 0 { return d; }
+    d.clear();
+    var out: u8[>..] = [];
+    if c_run("command -v goose", out) == 0 && trim(out).len > 0 && trim(out)[0] == '/' {
+        let g = trim(out);
+        d.append(g[..rfind(g, "/")]);
+        return d;
+    }
+    var home: u8[>..] = [];
+    if env("HOME", home) && home.len > 0 { format(d, home, "/.local/bin"); }
+    return d;
+}
+
+// Points DIR/gweb at bin. True when it changed something.
+fn install_link(bin: const u8[:]) -> bool {
+    let dir = bin_dir();
+    if dir.len == 0 { update_say("no HOME and no goose on PATH; link gweb yourself"); return false; }
+    var link: u8[>..] = [];
+    format(link, dir, "/gweb");
+    if link == bin { return false; }
+    var cmd: u8[>..] = [];
+    var out: u8[>..] = [];
+    cmd.append("readlink ");
+    shq(cmd, link);
+    let is_link = c_run(cmd, out) == 0;
+    let target = trim(out);
+    var changed = false;
+    var m: u8[>..] = [];
+    if is_link && target == bin {
+        // already there
+    } else {
+        mkdir_p(dir);
+        var was: u8[>..] = [];
+        if is_link { format(was, " (was a link to ", target, ")"); }
+        else if file_exists(link) { was.append(" (was a copy)"); }
+        if is_link || file_exists(link) { delete_file(link); }
+        if c_symlink(bin, link) == 0 { format(m, "cannot link ", link, " to ", bin); update_fail(m); }
+        format(m, "linked ", link, " -> ", bin, was);
+        update_say(m);
+        changed = true;
+    }
+    out.clear();
+    if c_run("command -v gweb", out) != 0 || trim(out) != link {
+        m.clear();
+        if trim(out).len == 0 { format(m, "note: ", dir, " is not on PATH"); } else { format(m, "note: ", trim(out), " comes first on PATH"); }
+        update_say(m);
+    }
+    return changed;
+}
+
+fn update_cmd(rest: u8[:][:]) {
+    var want: u8[>..] = [];
+    for a in rest {
+        if a == "--help" || a == "-h" { print_usage(); return; }
+        if a.len == 0 || a[0] == '-' || want.len > 0 || !git_part_ok(a, true) { usage(); }
+        want.append(a);
+    }
+    let home = gweb_home();
+    if home.len == 0 { update_fail("this gweb has no checkout beside it (or in $GWEB_HOME); install it from a clone, as the README says"); }
+    var m: u8[>..] = [];
+    var out: u8[>..] = [];
+    // The repos: gweb, and the sibling checkouts its builds use.
+    let names = ["gweb", "goose-net", "goose-sqlite"];
+    var dirs: u8[..512][>..] = [];
+    var heads: u8[..64][>..] = [];
+    for nm, k in names {
+        var d: u8[>..] = [];
+        if k == 0 { d.append(home); } else { var raw: u8[>..] = []; format(raw, home, "/../", nm); clean_path(raw, d); }
+        if k > 0 && !is_dir(d) { continue; }
+        if git_in(d, "rev-parse --verify -q HEAD", out) != 0 {
+            if k == 0 { format(m, home, " is not a git checkout; update it yourself"); update_fail(m); }
+            continue;
+        }
+        var t: u8[..512] = "";
+        t.append(d[..min(d.len, 511)]);
+        dirs.push(t);
+        var h: u8[..64] = "";
+        h.append(trim(out)[..min(trim(out).len, 64)]);
+        heads.push(h);
+    }
+    var dirty: u8[>..] = [];
+    for d in dirs {
+        if git_in(d, "status --porcelain --untracked-files=no", out) != 0 { format(m, "git status failed in ", d, ": ", first_line(out)); update_fail(m); }
+        if trim(out).len > 0 { format(dirty, "gweb update: ", d, " has changes to tracked files; commit or stash them\n"); }
+    }
+    if dirty.len > 0 { write_stderr(dirty); update_fail("nothing changed"); }
+    // The tags at each origin; a peeled line (^{}) gives the commit of an annotated tag.
+    var tag: u8[>..] = [];
+    var targets: u8[..64][>..] = [];
+    for d, k in dirs {
+        if git_in(d, "ls-remote --tags origin", out) != 0 {
+            format(m, "cannot reach the origin of ", d, ": ", first_line(out), "; nothing changed");
+            update_fail(m);
+        }
+        if k == 0 {
+            if want.len > 0 { tag.append(want); }
+            else {
+                var best = SemVer { major: 0, minor: 0, patch: 0, pre: "" };
+                for line in split(out, '\n') {
+                    let tab = find(line, "\trefs/tags/");
+                    if tab < 0 || ends_with(line, "^{}") { continue; }
+                    let name = trim(line[tab + 11..]);
+                    var v = SemVer { major: 0, minor: 0, patch: 0, pre: "" };
+                    if name.len < 2 || name[0] != 'v' || !semver_parse(name[1..], v) || v.pre.len > 0 { continue; }
+                    if tag.len == 0 || semver_cmp(v, best) > 0 { best = v; tag.clear(); tag.append(name); }
+                }
+                if tag.len == 0 { format(m, "the origin of ", d, " has no release tag (vX.Y.Z)"); update_fail(m); }
+            }
+        }
+        var sha: u8[>..] = [];
+        for line in split(out, '\n') {
+            let tab = find(line, "\t");
+            if tab < 0 { continue; }
+            let ref = trim(line[tab + 1..]);
+            var plain: u8[>..] = [];
+            format(plain, "refs/tags/", tag);
+            var peeled: u8[>..] = [];
+            format(peeled, plain, "^{}");
+            if ref == peeled || (ref == plain && sha.len == 0) { sha.clear(); sha.append(line[..tab]); }
+        }
+        if sha.len == 0 { format(m, d, ": no tag ", tag, " at its origin; nothing changed"); update_fail(m); }
+        var s: u8[..64] = "";
+        s.append(sha[..min(sha.len, 64)]);
+        targets.push(s);
+    }
+    // Decide every move before making one, so a refusal changes nothing.
+    var acts: i64[>..] = [];       // 0 at the tag, 1 past it, 2 fast-forward, 3 check out
+    var branches: u8[..256][>..] = [];
+    for d, k in dirs {
+        var br: u8[..256] = "";
+        var act = 0;
+        if heads[k] != targets[k] {
+            var args: u8[>..] = [];
+            git_in(d, "rev-parse --is-shallow-repository", out);
+            args.append(if trim(out) == "true" { "fetch --quiet --depth 1 origin tag " } else { "fetch --quiet origin tag " });
+            shq(args, tag);
+            if git_in(d, args, out) != 0 { format(m, "cannot fetch ", tag, " into ", d, ": ", first_line(out), "; nothing changed"); update_fail(m); }
+            if git_in(d, "symbolic-ref -q --short HEAD", out) == 0 { br.append(trim(out)[..min(trim(out).len, 255)]); }
+            if want.len == 0 && git_ancestor(d, tag, "HEAD") { act = 1; }
+            else if br.len > 0 && want.len == 0 {
+                if !git_ancestor(d, "HEAD", tag) {
+                    format(m, d, ": branch ", br, " has commits ", tag, " lacks; check out ", tag, " yourself; nothing changed");
+                    update_fail(m);
+                }
+                act = 2;
+            } else { act = 3; }
+        }
+        acts.push(act);
+        branches.push(br);
+    }
+    var moved = false;
+    for d, k in dirs {
+        m.clear();
+        var args: u8[>..] = [];
+        if acts[k] == 1 { format(m, d, " is past ", tag, "; left as it is"); update_say(m); continue; }
+        if acts[k] == 2 {
+            args.append("merge --ff-only --quiet ");
+            shq(args, tag);
+            if git_in(d, args, out) != 0 { format(m, d, ": git merge --ff-only failed: ", first_line(out)); update_fail(m); }
+            format(m, d, ": ", branches[k], " fast-forwarded to ", tag);
+        } else if acts[k] == 3 {
+            args.append("checkout --quiet --detach ");
+            shq(args, tag);
+            if git_in(d, args, out) != 0 { format(m, d, ": git checkout failed: ", first_line(out)); update_fail(m); }
+            format(m, d, ": checked out ", tag);
+            if branches[k].len > 0 { format(m, " (was on ", branches[k], ": git switch ", branches[k], " goes back)"); }
+        } else { continue; }
+        update_say(m);
+        moved = true;
+    }
+    var bin: u8[>..] = [];
+    format(bin, home, "/gweb");
+    var built = false;
+    if moved || !file_exists(bin) || stale_home().len > 0 {
+        var cmd: u8[>..] = [];
+        cmd.append("cd ");
+        shq(cmd, home);
+        cmd.append(" && ");
+        goose_cmd(cmd);
+        cmd.append(" build --color never -o gweb.new cli/gweb.goose");
+        update_say("building gweb");
+        if c_run(cmd, out) != 0 {
+            write_stderr(out);
+            update_fail(if moved { "the build failed; the checkout moved, and the old binary is unchanged" } else { "the build failed; the old binary is unchanged" });
+        }
+        var nb: u8[>..] = [];
+        format(nb, home, "/gweb.new");
+        if !rename_file(nb, bin) { format(m, "cannot replace ", bin); update_fail(m); }
+        m.clear();
+        format(m, "built ", bin);
+        update_say(m);
+        built = true;
+    }
+    let linked = install_link(bin);
+    if !moved && !built && !linked {
+        m.clear();
+        format(m, "up to date (", if acts.len > 0 && acts[0] == 1 { "past " } else { "" }, tag, ")");
+        update_say(m);
+    }
+}
+
 // ---------------------------------------------------------------- new
 
 let DOCKERFILE = embed_file("../deploy/Dockerfile");
 let DOCKERIGNORE = embed_file("../deploy/dockerignore");
+
+// Every file the gweb binary is built from, relative to the checkout, and its bytes at build time (warn_stale).
+// test/update.sh checks that each file in cli/ is listed.
+let SELF_FILES = [
+    "VERSION", "cli/gweb.goose", "cli/component.goose", "cli/html.goose", "cli/i18n.goose", "cli/image.goose",
+    "cli/pins.goose", "cli/structs.goose", "cli/tscan.goose", "cli/views.goose", "cli/proc.c", "cli/gzip.c",
+    "cli/gzip_core.c", "cli/gzip_core.h", "cli/gweb.build", "editor/lsp/server.mjs", "deploy/Dockerfile",
+    "deploy/dockerignore",
+    "client/gwi.js", "client/gwi.min.js", "client/gwf.js", "client/gwf.min.js", "client/gwh.js", "client/gwh.min.js",
+    "client/gwl.js", "client/gwl.min.js", "client/gwm.js", "client/gwm.min.js", "client/gwc.js", "client/gwc.min.js",
+    "client/gwt.js", "client/gwt.min.js", "client/gwn.js", "client/gwn.min.js", "client/gws.js", "client/gws.min.js",
+    "client/gwe.js", "client/gwe.min.js", "client/gwq.js", "client/gwq.min.js",
+];
+let SELF_DATA = [
+    EMBEDDED_VERSION, embed_file("gweb.goose"), embed_file("component.goose"), embed_file("html.goose"),
+    embed_file("i18n.goose"), embed_file("image.goose"), embed_file("pins.goose"), embed_file("structs.goose"),
+    embed_file("tscan.goose"), embed_file("views.goose"), embed_file("proc.c"), embed_file("gzip.c"),
+    embed_file("gzip_core.c"), embed_file("gzip_core.h"), embed_file("gweb.build"), LSP_JS, DOCKERFILE,
+    DOCKERIGNORE,
+    RT_PRETTY, RT_MIN, RT_FRAG_PRETTY, RT_FRAG_MIN, RT_HTTP_PRETTY, RT_HTTP_MIN,
+    RT_LIFE_PRETTY, RT_LIFE_MIN, RT_MODS_PRETTY, RT_MODS_MIN, RT_CHILD_PRETTY, RT_CHILD_MIN,
+    RT_TRANS_PRETTY, RT_TRANS_MIN, RT_NAV_PRETTY, RT_NAV_MIN, RT_STORE_PRETTY, RT_STORE_MIN,
+    RT_SSE_PRETTY, RT_SSE_MIN, RT_QUERY_PRETTY, RT_QUERY_MIN,
+];
 
 fn scaffold(dir: const u8[:]) {
     if is_dir(dir) {
@@ -5333,7 +6033,7 @@ fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
 <p>No page at {req.path}.</p>
 
 """],
-        [".gitignore", ".gweb/\n.gweb.dev/\n.gweb.test/\n.gweb.lsp/\n.gweb.check/\n.gweb.uploads/\n.env*.local\n"],
+        [".gitignore", ".gweb/\n.gweb.dev/\n.gweb.test/\n.gweb.lsp/\n.gweb.check/\n.gweb.uploads/\n.gweb.tools/\n.env*.local\n"],
         ["Dockerfile", DOCKERFILE],
         [".dockerignore", DOCKERIGNORE],
         ["public/site.css", """
@@ -5380,11 +6080,14 @@ usage: gweb [-C dir] <command> [flags]
   test              component test_* functions as Goose and as JavaScript (they must match), then tests/*.goose route tests
   check             generate into .gweb.check/ and run goose check; errors name .gshtml and page.html lines
   lsp               run the language server (needs node)
+  run [NAME [args]] run a command from gweb.packages or a package (none: list them)
+  update [TAG]      move the gweb checkout (and goose-net, goose-sqlite beside it) to the latest release, rebuild, link
   version           print the version and the package sources a build declares (also --version)
   help              print this text (also --help and -h, after any command)
 
 gen, build, start, test and check also take --strict (warnings fail the run) and --diagnostics json (stderr as
 JSON Lines). gen, build, start and export take --no-minify (serve public/**/*.css as written).
+build, start, export and dev run the hooks first; --no-hooks (or GWEB_HOOKS=0) skips them.
 
 server flags (gweb start, and .gweb/server): each has a GWEB_* variable, so --max-body is GWEB_MAX_BODY
   --port N --host H --workers N --access-log --idle-ms N --max-body N --max-upload N --upload-dir D
@@ -5417,11 +6120,18 @@ fn main() {
     if i >= a.len { usage(); }
     let cmd = a[i];
     let rest = a[i + 1..];
-    if cmd == "help" || cmd == "--help" || cmd == "-h" { print_usage(); return; }
-    for x in rest { if x == "--help" || x == "-h" { print_usage(); return; } }
-    if cmd == "version" || cmd == "--version" { print_version(); return; }
+    self_bin = self_path(a[0]);
     if cmd == "semver-cmp" { semver_cmd(rest); return; }
-    check_version();
+    if cmd == "update" { update_cmd(rest); return; }
+    if cmd != "lsp-gen" && cmd != "test-css" { warn_stale(); }
+    if cmd == "help" || cmd == "--help" || cmd == "-h" { print_usage(); return; }
+    // gweb run passes what follows the name to the command.
+    let own = if cmd == "run" && rest.len > 0 { rest[..1] } else { rest };
+    for x in own { if x == "--help" || x == "-h" { print_usage(); return; } }
+    if cmd == "version" || cmd == "--version" { print_version(); return; }
+    var hv: u8[>..] = [];
+    no_hooks = has_flag(rest, "--no-hooks") || (env("GWEB_HOOKS", hv) && trim(hv) == "0");
+    if cmd == "run" { run_cmd(rest); return; }
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
     if cmd == "test-css" { if !test_css() { exit(1); } return; }
     minify = !has_flag(rest, "--no-minify");
@@ -5451,7 +6161,7 @@ fn main() {
         var k = 0;
         while k < rest.len {
             if rest[k] == "-o" && k + 1 < rest.len && rest[k + 1].len > 0 { dir.clear(); dir.append(rest[k + 1]); k += 2; }
-            else if rest[k] == "--no-minify" { k += 1; }
+            else if rest[k] == "--no-minify" || rest[k] == "--no-hooks" { k += 1; }
             else { usage(); }
         }
         if !build(false, false) { exit(1); }

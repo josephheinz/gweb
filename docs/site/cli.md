@@ -11,6 +11,8 @@ gweb routes                  the route table
 gweb test                    component parity tests, then tests/*.goose
 gweb check                   goose check on a copy of the site
 gweb lsp                     language server for editors
+gweb run [NAME [args]]       a command from gweb.packages or a package
+gweb update [TAG]            update gweb to the latest release (or TAG)
 gweb version                 the version and the package sources
 gweb help                    the usage
 ```
@@ -32,7 +34,11 @@ gweb help                    the usage
 | `test` | runs each component's `test_*` functions as Goose and as JavaScript (needs `node`), then every `tests/*.goose` route test with the app's real dispatcher. Writes `.gweb.test/`. |
 | `check` | generates into `.gweb.check/` and runs `goose check`. Errors name `.gshtml`, `.html` and app `.goose` lines. Exit 1 on any error. |
 | `lsp` | runs the language server over stdio. Needs `node`. See [Editor support](editor.md). |
+| `run` | runs a `run NAME COMMAND` line (see [Packages](packages.md#commands-and-hooks)) with the arguments after it, and exits with its status. Alone, lists them. |
+| `update` | see below. |
 | `version` | prints the gweb version and the three sources it declares. |
+
+`build`, `start`, `export` and `dev` run the hooks first; `--no-hooks` or `GWEB_HOOKS=0` skips them.
 
 `gen`, `build`, `start`, `test` and `check` take `--strict` (any warning fails the run) and `--diagnostics json`
 (stderr becomes JSON Lines: `{"severity","file","line","code","message"}`). `gen`, `build`, `start` and `export` take
@@ -72,13 +78,32 @@ access log, and `--drain-ms 200`. The flags and variables still win, `.env` file
   `/__gweb/id` and a dev secret, so do that on a network you trust.
 - `start` and the server keep `0.0.0.0`, because a container needs it.
 
+## `gweb update`
+
+```
+gweb update            the latest release (vX.Y.Z, no prerelease)
+gweb update v1.3.0     that tag
+```
+
+1. Finds the checkout beside the binary (or `$GWEB_HOME`), and `../goose-net` and `../goose-sqlite` if they are git
+   checkouts.
+2. Refuses, changing nothing, when one has changes to tracked files, its `origin` cannot be reached, or it lacks the
+   tag.
+3. Moves each to the tag: a detached checkout, or a fast-forward of its branch. A checkout already past the latest
+   release is left as it is.
+4. Rebuilds `gweb` when something moved or the binary is stale, and links it as `DIR/gweb`: `$GWEB_BIN_DIR`, else
+   the folder of `goose` on `PATH`, else `~/.local/bin`.
+
+It asks nothing, prints each thing it did, or `gweb update: up to date (v1.3.0)`.
+
 ## Rules
 
 - `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`.
 - It finds the gweb checkout beside its own binary, or in `$GWEB_HOME`.
-  A checkout older or newer than the binary stops with "rebuild gweb".
+  When the checkout differs from what the binary was built from, every command first prints
+  `gweb is older than its source in DIR: run gweb update (or goose build -o gweb cli/gweb.goose)`.
 - `GWEB_SRC`, `GWEB_NET` and `GWEB_SQLITE` override a package source.
-- Generated files go in `.gweb/`, `.gweb.dev/`, `.gweb.test/`, `.gweb.check/` and `.gweb.lsp/`; uploads spool to
+- Generated files go in `.gweb/`, `.gweb.dev/`, `.gweb.test/`, `.gweb.check/`, `.gweb.lsp/` and `.gweb.tools/`; uploads spool to
   `.gweb.uploads/`. Keep them out of git (`gweb new` does). They are not part of any stable interface.
 - Packages are listed in `gweb.packages`. See [Packages](packages.md).
 - `GWEB_WORKERS` sets the worker count. The default is the lesser of the performance cores and 4.

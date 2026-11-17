@@ -191,6 +191,8 @@ step slotcheck sh "$HERE/slotcheck.sh"
 step richforms sh "$HERE/richforms.sh"
 step pkgdeps env PORT="${PORT:-4021}" sh "$HERE/pkgdeps.sh"
 step pgdeps env PORT="${PORT:-4022}" sh "$HERE/pgdeps.sh"
+step hooks env PORT="${PORT:-4031}" sh "$HERE/hooks.sh"
+step update sh "$HERE/update.sh"
 step ops_c sh "$HERE/c/run.sh"
 
 gweb_new() {

@@ -77,6 +77,32 @@ gweb merges them into the project's list. The same source twice is one line. Two
 one you want in the project's `gweb.packages` and change the package, or set `GWEB_PKG_BLOB`. A package with `package`
 lines says `gweb 1.1`, since gweb 1.0 refuses the line.
 
+## Commands and hooks
+
+`gweb.packages` and `gweb.package` take three more lines (gweb 1.3; a package with them says `gweb 1.3`):
+
+```
+tool cms cli/cms.goose
+run check cms check
+hook views cms check
+```
+
+- **`tool NAME FILE`** is a Goose program in the declaring folder. A command that names it as a word gets it built
+  first, into `.gweb.tools/bin/NAME`, and again when its sources change. A package's tool builds from a tree of links
+  in `.gweb.tools/src/NAME/`, so the package folder is not written to, and its root's `import X from "..."` lines get
+  the app's sources: `gweb`, `net`, `sqlite`, and the `package` lines. An app's tool builds as written.
+- **`run NAME COMMAND`**: `gweb run NAME a b` runs `COMMAND a b` with `/bin/sh` and exits with its status.
+  `gweb run` lists them. The app's command wins over a package's; two packages with one name need the app to choose.
+- **`hook PATHS COMMAND`**: `gweb build`, `start`, `export` and `dev` run it before generating. `PATHS` are the app's
+  folders or files, split by commas. `gweb dev` runs every hook before its first build, then only those whose paths
+  changed, and watches the paths. Packages' hooks run first, then the app's. A failing hook stops the build: its
+  output and the failing line are shown like a compile error, and `gweb dev` keeps the old server.
+  `--no-hooks` or `GWEB_HOOKS=0` skips them.
+
+Commands and hooks run in the app's folder, with `.gweb.tools/bin` first on `PATH`, `GWEB_APP` (the app),
+`GWEB_PKG_DIR` (the declaring package, or the app) and `GWEB` (the gweb binary). Add `.gweb.tools/` to `.gitignore`
+(`gweb new` does).
+
 ## Media storage
 
 `package blob josephheinz/goose-blob@v0.1.0`, then `import blob;`. `blob::open("file:data/media", "/media/")`, or an
