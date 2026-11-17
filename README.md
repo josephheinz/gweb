@@ -68,7 +68,7 @@ goose-architect agent.
 | `gweb.packages` | The packages this project uses, one source per line, `at /prefix` to mount (see Packages); `tool`, `run` and `hook` lines (see Commands and hooks) |
 | `gweb.package` | In a package: `name IDENT` and `gweb VERSION`, the lowest gweb it needs (`gweb 1.0` accepts any 1.x) |
 | `views/<group>/<Name>.goose` and `.html` | A view: `struct Props` and its template; gweb generates a JSON codec, an admin form and a by-name registry (see Views) |
-| `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
+| `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`). Goose imports load a file into the whole program, so a file that leaves its import out still sees `catalog::` when another file imports it; write the import anyway. |
 | `public/**` | Static files, embedded in the binary, with ETags and hashed URLs |
 | `tests/*.goose` | Route tests run by `gweb test` (see Route tests) |
 | `locales/default`, `locales/<tag>.txt` | Message catalogs, compiled to the `t::` module (see i18n) |
