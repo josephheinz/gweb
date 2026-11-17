@@ -275,14 +275,6 @@ fn _prepare_uploads(cfg: Config) {
     if cfg.upload_dir.len > 0 && c_up_mkdir(cfg.upload_dir) != 0 { c_up_sweep(cfg.upload_dir); }
 }
 
-fn _is_multipart(req: const http::Request&) -> bool {
-    let ct, has = http::header(req, "content-type");
-    if !has { return false; }
-    let t = trim(ct);
-    if t.len < 19 || !http::eq_nocase(t[..19], "multipart/form-data") { return false; }
-    return t.len == 19 || t[19] == ';' || t[19] == ' ';
-}
-
 fn _multipart_fail(res: http::Response&, status: i64) {
     res.body.clear();
     if status == 413 { http::json_error(res, http::Status.PayloadTooLarge, "multipart body over a limit"); }

@@ -467,6 +467,15 @@ fn _plain_not_found(res: http::Response&) {
 // The request's Content-Length: 0 when absent, -1 when malformed. Pages with MAX_UPLOAD compare it before reading the body.
 fn _content_length(req: const http::Request&) -> i64 { return http::content_length(req.head); }
 
+// True for a multipart/form-data body. Here, not in forms/upload.goose, because run_worker and gweb test read it.
+fn _is_multipart(req: const http::Request&) -> bool {
+    let ct, has = http::header(req, "content-type");
+    if !has { return false; }
+    let t = trim(ct);
+    if t.len < 19 || !http::eq_nocase(t[..19], "multipart/form-data") { return false; }
+    return t.len == 19 || t[19] == ';' || t[19] == ' ';
+}
+
 // A byte count for people: "32 MiB", "1.5 MiB", "200 KiB", "512 bytes". Whole KiB and MiB are rounded down to one decimal.
 fn size_text(out: u8[>..]&, n: i64) {
     let kib: i64 = 1024;
