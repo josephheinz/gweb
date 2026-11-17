@@ -24,8 +24,9 @@ let MAX_FIELDS = 32;
 let MAX_SLOTS = 8;
 let MAX_REPEAT = 64;
 
+// cap: bytes of a u8[..N], characters of a gweb::Text or LongText (chars; long for LongText), items of a repeater.
 struct Fld { owner: u8[..64], name: u8[..64], kind: i64, cap: i64, ty: u8[..96], required: bool, line: i64,
-             label: u8[..64], help: u8[..200], editor: u8[..32] }
+             label: u8[..64], help: u8[..200], editor: u8[..32], chars: bool, long: bool }
 
 // ns is v_<group>_<name>; meta_s..meta_e is the view's piece of meta_text.
 struct View { group: u8[..32], name: u8[..64], goose: u8[..512], html: u8[..512], ns: u8[..120], meta_s: i64, meta_e: i64 }
@@ -36,6 +37,7 @@ var meta_text: u8[>..];              // per view, the Goose statements that fill
 var enum_names: u8[..64][>..<];      // enums written as helpers for the view being generated
 var enum_vars: u8[>..];
 var enum_labels: u8[>..];            // "Enum\tVariant\tlabel\n" from let ENUM_LABELS, for the view being generated
+var props_root: bool;                // the view's Props is a root struct
 var parsed: u8[..96][>..<];         // the structs parse_struct has read for this view              // "Enum\tA,B,C\n" for each
 
 fn has_views() -> bool { return views.len > 0; }
@@ -118,13 +120,13 @@ fn scan() {
 
 // ---------------------------------------------------------------- reading the Goose file
 
-// The string literal after `let NAME = ` (its text between the quotes, as written), or "".
+// The string literal after `let NAME = ` (or `let NAME: T = `; its text between the quotes, as written), or "".
 fn let_literal(code: const u8[:], name: const u8[:]) -> const u8[:] {
     var pat: u8[>..] = [];
-    format(pat, "let ", name, " ");
+    format(pat, "let ", name);
     for line in split(code, '\n') {
         let t = trim_start(line);
-        if !starts_with(t, pat) { continue; }
+        if !starts_with(t, pat) || t.len == pat.len || (t[pat.len] != ' ' && t[pat.len] != ':') { continue; }
         let eq = find(t, "=");
         if eq < 0 { return ""; }
         let r = trim_start(t[eq + 1..]);
@@ -157,6 +159,32 @@ fn key_literal(text: const u8[:], key: const u8[:]) -> const u8[:], bool {
         return r[1..e], true;
     }
     return "", false;
+}
+
+// In text, after key: ("max:" then digits), the number; set false when the key is not there, ok false when the value
+// is not a number above 0.
+fn key_int(text: const u8[:], key: const u8[:]) -> i64, bool, bool {
+    var pat: u8[>..] = [];
+    format(pat, key, ":");
+    var at = 0;
+    while at < text.len {
+        let k = find(text[at..], pat);
+        if k < 0 { return 0, false, false; }
+        let p = at + k;
+        let ok_start = p == 0 || !(ident_byte(text[p - 1]));
+        at = p + pat.len;
+        if !ok_start { continue; }
+        let r = trim_start(text[at..]);
+        var e = 0;
+        while e < r.len && ((r[e] >= '0' && r[e] <= '9') || r[e] == '_') { e += 1; }
+        var digits: u8[>..] = [];
+        for c in r[..e] { if c != '_' { digits.push(c); } }
+        let n, ok = parse_int(digits);
+        let rest = trim_start(r[e..]);
+        if !ok || n <= 0 || (rest.len > 0 && rest[0] != ',' && rest[0] != '}') { return 0, true, false; }
+        return n, true, true;
+    }
+    return 0, false, false;
 }
 
 // The brace groups `Type { ... }` of the `let NAME = [ ... ];` statement, each handed to F(text, line).
@@ -222,6 +250,7 @@ fn parse_struct(src: const u8[:], lines, sname: const u8[:], top: bool, from_lin
         err(src, from_line, m);
         return false;
     }
+    if top { props_root = structs::is_root(lines, k); }
     var good = true;
     let first = fields.len;
     let next, closed = structs::fields(lines, k) { text, ln => if !add_field(src, lines, sname, top, text, ln) { good = false; }; };
@@ -232,12 +261,23 @@ fn parse_struct(src: const u8[:], lines, sname: const u8[:], top: bool, from_lin
         err(src, k + 1, m);
         good = false;
     }
-    // A repeater is the last field, so its growable array stays the tail of the struct.
+    // A repeater is the last field of a plain struct, so its growable array stays the tail of the struct. A root struct
+    // stores each growable field on its own (1.3), so it may have several, anywhere.
     for i in first..fields.len {
-        if fields[i].kind == K_LIST && i != fields.len - 1 {
-            err(src, fields[i].line, "a repeater (T[>..<]) is the last field of Props");
+        if top && !props_root && fields[i].kind == K_LIST && i != fields.len - 1 {
+            err(src, fields[i].line, "a repeater (T[>..<]) is the last field of Props (or write root struct Props)");
             good = false;
         }
+        if top && !props_root && fields[i].chars {
+            err(src, fields[i].line, "a Props with gweb::Text is a root struct: write root struct Props");
+            good = false;
+        }
+    }
+    if !top && structs::is_root(lines, k) {
+        var m: u8[>..] = [];
+        format(m, "struct ", sname, " is a field of Props, so it cannot be a root struct");
+        err(src, k + 1, m);
+        good = false;
     }
     return good;
 }
@@ -268,14 +308,15 @@ fn add_field(src: const u8[:], lines, sname: const u8[:], top: bool, text: const
     let t = trim(text);
     if t.len == 0 { return true; }
     let colon = find(t, ":");
-    let msg = "Props fields are i64, bool, u8[..N], an enum without payloads, a struct of this file, a repeater of one (last) or ns::T";
+    let msg = "Props fields are i64, bool, u8[..N], gweb::Text, gweb::LongText, an enum without payloads, a struct of this file, a repeater of one or ns::T";
     if colon <= 0 { err(src, ln, msg); return false; }
     let name = trim(t[..colon]);
     let rest = trim_start(t[colon + 1..]);
     let eq = find(rest, "=");
     let ty = trim(if eq >= 0 { rest[..eq] } else { rest });
     if !is_ident(name) || name.len > 64 || ty.len == 0 || ty.len > 96 { err(src, ln, msg); return false; }
-    var f = Fld { owner: "", name: "", kind: K_TEXT, cap: 0, ty: "", required: eq < 0, line: ln, label: "", help: "", editor: "" };
+    var f = Fld { owner: "", name: "", kind: K_TEXT, cap: 0, ty: "", required: eq < 0, line: ln, label: "", help: "", editor: "",
+                  chars: false, long: false };
     f.owner.append(sname);
     f.name.append(name);
     f.ty.append(ty);
@@ -307,6 +348,18 @@ fn add_field(src: const u8[:], lines, sname: const u8[:], top: bool, text: const
             err(src, ln, m);
             return false;
         }
+    }
+    else if ty == "gweb::Text" || ty == "gweb::LongText" {
+        if !top {
+            var m: u8[>..] = [];
+            format(m, ty, " is a field of Props only; in a struct of Props (a fieldset or a repeater's item) text is u8[..N]");
+            err(src, ln, m);
+            return false;
+        }
+        f.kind = K_TEXT;
+        f.chars = true;
+        f.long = ty == "gweb::LongText";
+        f.cap = if f.long { 65536 } else { 128 };
     }
     else if find(ty, "::") > 0 { f.kind = K_FOREIGN; }
     else if is_ident(ty) {
@@ -409,6 +462,20 @@ fn apply_ui(src: const u8[:], code: const u8[:]) {
                 let label, lok = key_literal(text, "label");
                 let help, hok = key_literal(text, "help");
                 let editor, eok = key_literal(text, "editor");
+                let max, mset, mok = key_int(text, "max");
+                if mset && !mok { err(src, ln, "UI: max is a whole number above 0 (a literal)"); }
+                else if mset && !fields[idx].chars {
+                    var m: u8[>..] = [];
+                    format(m, "UI: max is for gweb::Text and gweb::LongText fields; the limit of \"", name, "\" is its type");
+                    err(src, ln, m);
+                } else if mset {
+                    fields[idx].cap = max;
+                    if max > 1048576 {
+                        var m: u8[>..] = [];
+                        format(m, "UI: max ", max, " for \"", name, "\" is above the 1 MiB request limit (--max-body), so a form cannot reach it");
+                        warn(src, ln, "text-max", m);
+                    }
+                }
                 if lok { fields[idx].label.clear(); fields[idx].label.append(label[..min(label.len, 64)]); }
                 if hok { fields[idx].help.clear(); fields[idx].help.append(help[..min(help.len, 200)]); }
                 if eok { fields[idx].editor.clear(); fields[idx].editor.append(editor[..min(editor.len, 32)]); }
@@ -476,7 +543,8 @@ fn names_array(m: u8[>..]&, enum_name: const u8[:]) {
 }
 
 fn gen_read_struct(m: u8[>..]&, code: const u8[:], sname: const u8[:]) {
-    format(m, "fn gw_read_", sname, "(r: json::Reader&, v: ", sname, "&, warn: i64&) {\n");
+    // errs, prefix and named: read_errs names a field whose text is cut or over its limit (1.3); read does not.
+    format(m, "fn gw_read_", sname, "(r: json::Reader&, v: ", sname, "&, warn: i64&, errs: gweb::FieldErrors&, prefix: const u8[:], named: bool) {\n");
     m.append("    if json::peek(r) != '{' { json::skip(r); warn += 1; return; }\n    json::each_member(r) { key =>\n");
     var first = true;
     for f in fields {
@@ -491,7 +559,10 @@ fn gen_read_struct(m: u8[>..]&, code: const u8[:], sname: const u8[:]) {
             for k in split(keys, '\n') { if k.len > 0 { format(m, " || key == \"", k, "\""); } }
         }
         m.append(" { ");
-        if f.kind == K_TEXT { format(m, "gweb::_jr_text(r, v.", f.name, ", warn);"); }
+        if f.kind == K_TEXT && f.chars {
+            format(m, "if gweb::_jr_text_all(r, v.", f.name, ", ", f.cap, ", warn) && named { gweb::_jr_note_long(errs, prefix, \"", f.name, "\", v.", f.name, ", ", f.cap, "); }");
+        }
+        else if f.kind == K_TEXT { format(m, "if gweb::_jr_text_cut(r, v.", f.name, ", warn) && named { gweb::_jr_note_cut(errs, prefix, \"", f.name, "\", ", f.cap, "); }"); }
         else if f.kind == K_INT { format(m, "gweb::_jr_int(r, v.", f.name, ", warn);"); }
         else if f.kind == K_BOOL { format(m, "gweb::_jr_bool(r, v.", f.name, ", warn);"); }
         else if f.kind == K_ENUM {
@@ -499,9 +570,12 @@ fn gen_read_struct(m: u8[>..]&, code: const u8[:], sname: const u8[:]) {
             names_array(m, f.ty);
             format(m, ", warn); if k >= 0 { v.", f.name, " = gw_pick_", f.ty, "(k); }");
         }
-        else if f.kind == K_GROUP { format(m, "gw_read_", f.ty, "(r, v.", f.name, ", warn);"); }
+        else if f.kind == K_GROUP {
+            format(m, "var gp: u8[>..] = []; if named { format(gp, prefix, \"", f.name, ".\"); } gw_read_", f.ty, "(r, v.", f.name, ", warn, errs, gp, named);");
+        }
         else if f.kind == K_LIST {
-            format(m, "if json::peek(r) == '[' { json::each_element(r) { var it = ", f.ty, " { .. }; gw_read_", f.ty, "(r, it, warn); ",
+            format(m, "if json::peek(r) == '[' { var n = 0; json::each_element(r) { var it = ", f.ty, " { .. }; var ip: u8[>..] = []; ",
+                   "if named { format(ip, prefix, \"", f.name, ".\", n, \".\"); } gw_read_", f.ty, "(r, it, warn, errs, ip, named); n += 1; ",
                    "if v.", f.name, ".len < ", f.cap, " { v.", f.name, ".push(it); } else { warn += 1; } }; } else { json::skip(r); warn += 1; }");
         }
         else { format(m, find_ns(f.ty), "::gw_read(r, v.", f.name, ", warn);"); }
@@ -546,8 +620,9 @@ fn gen_form_struct(m: u8[>..]&, sname: const u8[:]) {
         label_of(f, label);
         m.append("    ");
         if f.kind == K_TEXT {
-            format(m, "gweb::_vf_text(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", ", f.cap, ", v.", f.name,
-                   ", errs, ", if f.required { "true" } else { "false" }, ", req, rich);");
+            format(m, "{ let ui = gweb::_TextUi { field: \"", f.name, "\", label: \"", label, "\", help: \"", f.help, "\", editor: \"", f.editor, "\", cap: ", f.cap,
+                   ", kind: ", if f.long { 2 } else if f.chars { 1 } else { 0 }, ", required: ", if f.required { "true" } else { "false" },
+                   " }; gweb::_vf_text_ui(out, prefix, ui, v.", f.name, ", errs, req, rich); }");
         }
         else if f.kind == K_INT {
             format(m, "gweb::_vf_int(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", v.", f.name,
@@ -577,11 +652,20 @@ fn gen_form_struct(m: u8[>..]&, sname: const u8[:]) {
                    "(out, gp, v.", f.name, ", errs, req, rich); gweb::_vf_group_close(out); }");
         }
         else if f.kind == K_LIST {
-            // The item's legend shows its ITEM_LABEL field in rich forms.
+            // The item's legend shows its ITEM_LABEL field in rich forms: a text field as is, an enum by its label, a
+            // foreign field through its type's gw_label.
             var item_label: u8[>..] = [];
-            if item_label_field.len > 0 { format(item_label, "it.", item_label_field); } else { item_label.append("\"\""); }
+            var pre: u8[>..] = [];
+            let li = if item_label_field.len > 0 { find_field(f.ty, item_label_field) } else { -1 };
+            if li < 0 { item_label.append("\"\""); }
+            else if fields[li].kind == K_ENUM { format(item_label, "gw_label_", fields[li].ty, "(it.", item_label_field, ")"); }
+            else if fields[li].kind == K_FOREIGN {
+                format(pre, "var lb: u8[>..] = []; if rich { ", find_ns(fields[li].ty), "::gw_label(lb, it.", item_label_field, "); } ");
+                item_label.append("lb");
+            }
+            else { format(item_label, "it.", item_label_field); }
             format(m, "{ gweb::_vf_list_open(out, prefix, \"", f.name, "\", \"", label, "\", v.", f.name, ".len, rich); var n = 0; for it in v.", f.name,
-                   " { var ip: u8[>..] = []; format(ip, prefix, \"", f.name, ".\", n, \".\"); gweb::_vf_item_open(out, n, ", item_label, ", rich); gw_form_", f.ty,
+                   " { var ip: u8[>..] = []; format(ip, prefix, \"", f.name, ".\", n, \".\"); ", pre, "gweb::_vf_item_open(out, n, ", item_label, ", rich); gw_form_", f.ty,
                    "(out, ip, it, errs, req, rich); gweb::_vf_item_close(out, prefix, \"", f.name, "\", n, v.", f.name, ".len, rich); n += 1; } gweb::_vf_list_close(out, prefix, \"",
                    f.name, "\", v.", f.name, ".len, ", f.cap, ", rich); }");
         }
@@ -600,7 +684,8 @@ fn gen_parse_struct(m: u8[>..]&, sname: const u8[:]) {
         if f.owner != sname { continue; }
         let req = if f.required { "true" } else { "false" };
         m.append("    ");
-        if f.kind == K_TEXT { format(m, "gweb::_vp_text(req, prefix, \"", f.name, "\", v.", f.name, ", errs, ", req, ");"); }
+        if f.kind == K_TEXT && f.chars { format(m, "gweb::_vp_text_max(req, prefix, \"", f.name, "\", ", f.cap, ", v.", f.name, ", errs, ", req, ");"); }
+        else if f.kind == K_TEXT { format(m, "gweb::_vp_text(req, prefix, \"", f.name, "\", v.", f.name, ", errs, ", req, ");"); }
         else if f.kind == K_INT { format(m, "gweb::_vp_int(req, prefix, \"", f.name, "\", v.", f.name, ", errs, ", req, ");"); }
         else if f.kind == K_BOOL { format(m, "gweb::_vp_bool(req, prefix, \"", f.name, "\", v.", f.name, ");"); }
         else if f.kind == K_ENUM {
@@ -628,57 +713,91 @@ fn gen_parse_struct(m: u8[>..]&, sname: const u8[:]) {
 // was applied; the errors the parse added are dropped then, since the form is shown again, not saved.
 fn gen_act_struct(m: u8[>..]&, sname: const u8[:]) {
     format(m, "fn gw_act_", sname, "(req: const http::Request&, prefix: const u8[:], v: ", sname, "&, errs: gweb::FieldErrors&, before: i64) -> bool {\n");
-    var has_list = false;
     for f in fields {
         if f.owner != sname || f.kind != K_LIST { continue; }
-        has_list = true;
         let n = f.name;
-        format(m, "    let kind, k = gweb::_vp_act(req, prefix, \"", n, "\");\n    if kind == 0 { return false; }\n");
+        format(m, "    {\n    let kind, k = gweb::_vp_act(req, prefix, \"", n, "\");\n    if kind != 0 {\n");
         m.append("    errs.n = before;\n    if before == 0 { errs.dropped = false; }\n");
         format(m, "    if kind == 1 {\n        if v.", n, ".len < ", f.cap, " { v.", n, ".push(", f.ty, " { .. }); }\n",
                "        else { var id: u8[>..] = []; format(id, prefix, \"", n, ".n\"); gweb::add_error(errs, id, \"Too many items.\"); }\n    }\n");
         format(m, "    else if kind == 2 && k < v.", n, ".len {\n        var i = k;\n        while i + 1 < v.", n, ".len { v.", n, "[i] = v.", n, "[i + 1]; i += 1; }\n        v.", n, ".pop();\n    }\n");
         format(m, "    else if kind == 3 && k > 0 && k < v.", n, ".len { let t = v.", n, "[k]; v.", n, "[k] = v.", n, "[k - 1]; v.", n, "[k - 1] = t; }\n");
         format(m, "    else if kind == 4 && k + 1 < v.", n, ".len { let t = v.", n, "[k]; v.", n, "[k] = v.", n, "[k + 1]; v.", n, "[k + 1] = t; }\n");
-        m.append("    return true;\n");
+        m.append("    return true;\n    }\n    }\n");
     }
-    if !has_list { m.append("    return false;\n"); }
+    m.append("    return false;\n");
     m.append("}\n");
 }
 
-fn gen_enum_helpers(m: u8[>..]&) {
+// For each enum: gw_name_E (the variant name, as stored) and gw_pick_E, and for templates (1.3) gw_label_E (its
+// ENUM_LABELS label, else its name), a format hook that prints that label, so {props.gap} is "Wide gap", and
+// gweb::enum_name(v) and gweb::enum_label(v). A view that writes its own format for the enum keeps it.
+fn gen_enum_helpers(m: u8[>..]&, code: const u8[:], ns: const u8[:]) {
     for e in enum_names {
         let vs = variants_of(e);
         format(m, "fn gw_name_", e, "(v: ", e, ") -> const u8[:] {\n    match v {\n");
         for n in split(vs, ',') { format(m, "        ", n, " => \"", n, "\",\n"); }
         m.append("    }\n}\n");
+        format(m, "fn gw_label_", e, "(v: ", e, ") -> const u8[:] {\n    match v {\n");
+        for n in split(vs, ',') {
+            let l = enum_label(e, n);
+            format(m, "        ", n, " => \"", if l.len > 0 { l } else { n }, "\",\n");
+        }
+        m.append("    }\n}\n");
+        if !user_format(code, e) { format(m, "fn format(out: u8[>..]&, v: ", e, ") { out.append(gw_label_", e, "(v)); }\n"); }
+        format(m, "fn gweb::enum_name(v: ", ns, "::", e, ") -> const u8[:] { return ", ns, "::gw_name_", e, "(v); }\n");
+        format(m, "fn gweb::enum_label(v: ", ns, "::", e, ") -> const u8[:] { return ", ns, "::gw_label_", e, "(v); }\n");
         format(m, "fn gw_pick_", e, "(k: i64) -> ", e, " {\n    match k {\n");
         for n, i in split(vs, ',') { format(m, "        ", i, " => ", e, ".", n, ",\n"); }
         format(m, "        _ => ", e, ".", split(vs, ',')[0], ",\n    }\n}\n");
     }
 }
 
+// True when the view's code has its own `fn format(` for enum e.
+fn user_format(code: const u8[:], e: const u8[:]) -> bool {
+    var ty: u8[>..] = [];
+    format(ty, ": ", e, ")");
+    for line in split(code, '\n') {
+        let t = trim_start(line);
+        if starts_with(t, "fn format(") && find(t, ty) > 0 { return true; }
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- one view
 
 fn field_kind_ty(f: const Fld&) -> const u8[:] {
+    if f.chars { return f.ty; }
     if f.kind == K_ENUM || f.kind == K_GROUP || f.kind == K_LIST || f.kind == K_FOREIGN { return f.ty; }
     return "";
 }
 
-// let ITEM_LABEL = "title"; names a text field of the repeater's item. A rich form shows it in the item's legend.
+// let ITEM_LABEL = "title"; names a field of the repeater's item. A rich form shows it in the item's legend: a text
+// field as is, an enum by its label, and a foreign field (ns::T) through `ns::gw_label(out, v)` (1.3). With several
+// repeaters (a root struct), each whose item has the field shows it.
 fn check_item_label(src: const u8[:], code: const u8[:]) {
     item_label_field.clear();
     let name = let_literal(code, "ITEM_LABEL");
     if name.len == 0 { return; }
     var list_ty: u8[..96] = "";
-    for f in fields { if f.owner == "Props" && f.kind == K_LIST { list_ty.clear(); list_ty.append(f.ty); } }
+    var lists = 0;
+    var idx = -1;
+    for f in fields {
+        if f.owner != "Props" || f.kind != K_LIST { continue; }
+        lists += 1;
+        if lists == 1 || idx < 0 { list_ty.clear(); list_ty.append(f.ty); }
+        let k = find_field(f.ty, name);
+        if idx < 0 && k >= 0 { idx = k; list_ty.clear(); list_ty.append(f.ty); }
+    }
     var ln = 0;
-    for line, i in split(code, '\n') { if starts_with(trim_start(line), "let ITEM_LABEL ") { ln = i + 1; } }
+    for line, i in split(code, '\n') {
+        let t = trim_start(line);
+        if starts_with(t, "let ITEM_LABEL ") || starts_with(t, "let ITEM_LABEL:") { ln = i + 1; }
+    }
     var m: u8[>..] = [];
-    if list_ty.len == 0 { err(src, ln, "ITEM_LABEL needs a repeater in Props"); return; }
-    let idx = find_field(list_ty, name);
-    if idx < 0 || fields[idx].kind != K_TEXT {
-        format(m, "ITEM_LABEL: \"", name, "\" is not a text field of ", list_ty);
+    if lists == 0 { err(src, ln, "ITEM_LABEL needs a repeater in Props"); return; }
+    if idx < 0 || (fields[idx].kind != K_TEXT && fields[idx].kind != K_ENUM && fields[idx].kind != K_FOREIGN) {
+        format(m, "ITEM_LABEL: \"", name, "\" is not a text field of ", list_ty, " (nor an enum or ns::T field)");
         err(src, ln, m);
         return;
     }
@@ -690,7 +809,7 @@ fn gen_view(v: View&) -> bool {
     var code: u8[>..] = [];
     if !read_checked(v.goose, code) { return false; }
     let before = errors;
-    for n in ["read", "write", "defaults", "form", "form_req", "parse"] {
+    for n in ["read", "read_errs", "write", "defaults", "form", "form_req", "parse"] {
         if defines(code, n) {
             var m: u8[>..] = [];
             format(m, "fn ", n, " is generated for every view; rename yours");
@@ -706,12 +825,13 @@ fn gen_view(v: View&) -> bool {
     enum_names.clear();
     enum_vars.clear();
     enum_labels.clear();
+    props_root = false;
     let lines = split(code, '\n');
     if parse_struct(v.goose, lines, "Props", true, 0) && parse_inner(v.goose, lines) { apply_ui(v.goose, code); check_item_label(v.goose, code); apply_enum_labels(v.goose, code); }
     if errors > before { return false; }
     var extra: u8[>..] = [];
     extra.append("\n// gweb: view codec, form and parser (generated)\n");
-    gen_enum_helpers(extra);
+    gen_enum_helpers(extra, code, v.ns);
     var seen: u8[..64][>..<] = [];
     for f in fields {
         var done = false;
@@ -731,10 +851,19 @@ fn read(text: const u8[:], p: Props&) -> i64 {
     var r = json::reader(text);
     var warn = 0;
     if json::peek(r) == 0 { return 0; }
-    gw_read_Props(r, p, warn);
+    gw_read_Props(r, p, warn, gweb::_jr_none, "", false);
     if !json::finish(r) { warn += 1; }
     return warn;
 }
+fn gw_read_named(text: const u8[:], p: Props&, errs: gweb::FieldErrors&, prefix: const u8[:]) -> i64 {
+    var r = json::reader(text);
+    var warn = 0;
+    if json::peek(r) == 0 { return 0; }
+    gw_read_Props(r, p, warn, errs, prefix, true);
+    if !json::finish(r) { warn += 1; }
+    return warn;
+}
+fn read_errs(text: const u8[:], p: Props&, errs: gweb::FieldErrors&) -> i64 { return gw_read_named(text, p, errs, ""); }
 fn write(out: u8[>..]&, p: const Props&) { gw_write_Props(out, p); }
 fn defaults(out: u8[>..]&) { var p = Props { .. }; gw_write_Props(out, p); }
 fn form(out: u8[>..]&, text: const u8[:], errs: const gweb::FieldErrors&, prefix: const u8[:]) {
@@ -745,8 +874,11 @@ fn form(out: u8[>..]&, text: const u8[:], errs: const gweb::FieldErrors&, prefix
 }
 fn form_req(out: u8[>..]&, req: const http::Request&, text: const u8[:], errs: const gweb::FieldErrors&, prefix: const u8[:]) {
     var p = Props { .. };
-    read(text, p);
-    gw_form_Props(out, prefix, p, errs, req, true);
+    if req.method == http::Method.Post { read(text, p); gw_form_Props(out, prefix, p, errs, req, true); return; }
+    // Not a POST: the stored text that is cut or over its limit is named under its field before it is saved over.
+    var named = errs;
+    gw_read_named(text, p, named, prefix);
+    gw_form_Props(out, prefix, p, named, req, true);
 }
 fn parse(req: const http::Request&, prefix: const u8[:], out: u8[>..]&, errs: gweb::FieldErrors&) -> bool {
     var p = Props { .. };
@@ -762,6 +894,14 @@ fn parse(req: const http::Request&, prefix: const u8[:], out: u8[>..]&, errs: gw
     }
     // The JSON is written after an error too: it holds what the user sent, so the page can show the form again as typed.
     extra.append("    write(out, p);\n    return errs.n == before && !acted;\n}\n");
+    // g_read_errs: stored JSON checked as a form would be (1.3): text cut or over its limit, then validate.
+    extra.append("fn gw_check(text: const u8[:], out: u8[>..]&, errs: gweb::FieldErrors&, prefix: const u8[:]) -> bool {\n    var p = Props { .. };\n    let before = errs.n;\n    gw_read_named(text, p, errs, prefix);\n");
+    if defines(code, "validate") {
+        extra.append("    if errs.n == before {\n        var ve = gweb::no_errors();\n        validate(p, ve);\n");
+        extra.append("        for k in ve.n {\n            var fname: u8[>..] = [];\n            if ve.items[k].field.len > 0 { format(fname, prefix, ve.items[k].field); }\n");
+        extra.append("            gweb::add_error(errs, fname, ve.items[k].message);\n        }\n    }\n");
+    }
+    extra.append("    write(out, p);\n    return errs.n == before;\n}\n");
     var more: u8[>..] = [];
     more.append("import json; import net.http; import gweb; import gweb.site.views; import gweb.forms.valid; ");
     write_prefixed(v.goose, v.ns, code, extra, more);
@@ -795,7 +935,7 @@ fn gen_meta(v: const View&, label: const u8[:], slots: const u8[:]) {
         var kind: u8[>..] = [];
         format(kind, "gweb::FieldKind.", KIND_NAMES[f.kind]);
         format(m, "            gweb::_vm_field(m, \"", f.name, "\", \"", l, "\", \"", f.help, "\", \"", f.editor, "\", ", kind, ", \"", field_kind_ty(f), "\", ",
-               f.cap, ", ", if f.required { "true" } else { "false" }, ");\n");
+               f.cap, ", ", if f.required { "true" } else { "false" }, ", ", if f.chars { "true" } else { "false" }, ");\n");
     }
     for l in split(slots, '\n') {
         let parts = split(l, '\t');
@@ -868,6 +1008,9 @@ fn gen_group(m: u8[>..]&, g: const u8[:], a: i64, b: i64) {
     format(m, "fn ", g, "_form_req(out: u8[>..]&, req: const http::Request&, name: const u8[:], props_json: const u8[:], errs: const gweb::FieldErrors&, prefix: const u8[:]) -> bool {\n    let i = ", g, "_index(name);\n");
     for k in a..b { format(m, "    if i == ", k - a, " { ", views[k].ns, "::form_req(out, req, props_json, errs, prefix); return true; }\n"); }
     m.append("    return false;\n}\n");
+    format(m, "fn ", g, "_read_errs(name: const u8[:], props_json: const u8[:], out_json: u8[>..]&, errs: gweb::FieldErrors&, prefix: const u8[:]) -> bool {\n    let i = ", g, "_index(name);\n");
+    for k in a..b { format(m, "    if i == ", k - a, " { return ", views[k].ns, "::gw_check(props_json, out_json, errs, prefix); }\n"); }
+    m.append("    gweb::add_error(errs, \"\", \"Unknown view.\");\n    return false;\n}\n");
     format(m, "fn ", g, "_parse(req: const http::Request&, name: const u8[:], prefix: const u8[:], out_json: u8[>..]&, errs: gweb::FieldErrors&) -> bool {\n    let i = ", g, "_index(name);\n");
     for k in a..b { format(m, "    if i == ", k - a, " { return ", views[k].ns, "::parse(req, prefix, out_json, errs); }\n"); }
     m.append("    gweb::add_error(errs, \"\", \"Unknown view.\");\n    return false;\n}\n");

@@ -60,7 +60,7 @@ fn test_rich_form(t: gweb::Tester&) {
     var out: u8[>..] = [];
     gweb::expect(t, views::widgets_form_req(out, req, "Card", JSON, errs, "w."), "the rich form draws");
     has(t, out, " <small class=\"gw-help\" id=\"w.title-help\">Up to 30 bytes.</small>", "help has an id");
-    has(t, out, "name=\"w.title\" value=\"Hi\" maxlength=\"30\" required aria-describedby=\"w.title-help\">", "the control names the help");
+    has(t, out, "name=\"w.title\" value=\"Hi\" required aria-describedby=\"w.title-help\">", "the control names the help, and has no maxlength (1.3)");
     lacks(t, out, "w.count-help", "a field with no help has no help id");
     has(t, out, "<legend>#1: Milk</legend>", "the item legend has the ITEM_LABEL text");
     has(t, out, "<legend>#2: Eggs &lt;b&gt;</legend>", "escaped");

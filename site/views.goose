@@ -17,8 +17,17 @@ import site.template;
 // ---------------------------------------------------------------- what a view's Goose file may declare
 
 // let UI = [gweb::FieldUi { field: "body", label: "Text", help: "Markdown.", editor: "markdown" }];
-// field names a field of Props, or "group.field" for a field inside a nested struct.
-struct FieldUi { field: const u8[:], label: const u8[:] = "", help: const u8[:] = "", editor: const u8[:] = "" }
+// field names a field of Props, or "group.field" for a field inside a nested struct. max (1.3) is the limit of a
+// gweb::Text or gweb::LongText field, in characters; 0 keeps the type's default.
+struct FieldUi { field: const u8[:], label: const u8[:] = "", help: const u8[:] = "", editor: const u8[:] = "", max: i64 = 0 }
+
+// Text in a view's Props (1.3, DESIGN-ADDENDUM-22). Both grow with their content, so a Props with one is a
+// `root struct`. Text is a line, at most 128 characters, drawn as <input>; LongText a body, at most 65,536, drawn as
+// <textarea> (or its editor). FieldUi.max changes either limit. Fieldsets and repeater items keep u8[..N].
+type Text = u8[>..];
+type LongText = u8[>..];
+let TEXT_MAX = 128;
+let LONG_TEXT_MAX = 65536;
 
 // let RENAMED = [gweb::Renamed { from: "heading", to: "title" }]; a stored key `from` is read as field `to`.
 struct Renamed { from: const u8[:], to: const u8[:] }
@@ -35,16 +44,17 @@ let VIEW_MAX_REPEAT = 64;
 
 enum FieldKind { Text, Int, Bool, Enum, Group, List, Foreign }
 
-// ty: the enum, struct or foreign type name. cap: bytes of a Text, items of a List. required: no default.
+// ty: the enum, struct or foreign type name. cap: the limit of a Text (bytes of a u8[..N]; characters of a gweb::Text
+// or LongText, when chars is set), items of a List. required: no default. ty is "gweb::Text" or "gweb::LongText" for those.
 struct FieldMeta { name: u8[..64] = "", label: u8[..64] = "", help: u8[..200] = "", editor: u8[..32] = "",
-                   kind: FieldKind = FieldKind.Text, ty: u8[..64] = "", cap: i64 = 0, required: bool = false }
+                   kind: FieldKind = FieldKind.Text, ty: u8[..64] = "", cap: i64 = 0, required: bool = false, chars: bool = false }
 struct SlotMeta { name: u8[..32] = "", allow: u8[..200] = "" }   // allow: space-separated view names; "" means all
 struct ViewMeta { name: u8[..64] = "", group: u8[..32] = "", label: u8[..64] = "", icon: u8[..32] = "",
                   fields: FieldMeta[..32] = [], slots: SlotMeta[..8] = [] }
 
 // Used by the generated registry.
 fn _vm_field(m: ViewMeta&, name: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:],
-            kind: FieldKind, ty: const u8[:], cap: i64, required: bool) {
+            kind: FieldKind, ty: const u8[:], cap: i64, required: bool, chars: bool) {
     var f = FieldMeta { .. };
     f.name.append(name);
     f.label.append(label);
@@ -54,6 +64,7 @@ fn _vm_field(m: ViewMeta&, name: const u8[:], label: const u8[:], help: const u8
     f.ty.append(ty);
     f.cap = cap;
     f.required = required;
+    f.chars = chars;
     if m.fields.len < m.fields.cap { m.fields.push(f); }
 }
 
@@ -87,6 +98,61 @@ fn _jr_text<T>(r: json::Reader&, dst: T&, warn: i64&) {
     dst.clear();
     dst.append(s[..n]);
 }
+
+// A u8[..N] field: as _jr_text, and true when the text was cut.
+fn _jr_text_cut<T>(r: json::Reader&, dst: T&, warn: i64&) -> bool {
+    if json::peek(r) != '"' { json::skip(r); warn += 1; return false; }
+    var scratch: u8[>..] = [];
+    let s = json::read_string(r, scratch);
+    var n = s.len;
+    let cut = n > dst.cap;
+    if cut {
+        warn += 1;
+        n = dst.cap;
+        while n > 0 && (s[n] & 0xC0) == 0x80 { n -= 1; }
+    }
+    dst.clear();
+    dst.append(s[..n]);
+    return cut;
+}
+
+// A gweb::Text or LongText field (1.3): the whole string, never cut. True when it is over max characters (it is kept,
+// and counts one warning). A value that is not a string is skipped, counted, and keeps the default.
+fn _jr_text_all(r: json::Reader&, dst: u8[>..]&, max: i64, warn: i64&) -> bool {
+    if json::peek(r) != '"' { json::skip(r); warn += 1; return false; }
+    var scratch: u8[>..] = [];
+    let s = json::read_string(r, scratch);
+    dst.clear();
+    dst.append(s);
+    if s.len > max && _char_count(s) > max { warn += 1; return true; }
+    return false;
+}
+
+// The named read errors (read_errs): field is prefix + name.
+fn _jr_note_long(errs: FieldErrors&, prefix: const u8[:], name: const u8[:], v: const u8[:], max: i64) {
+    var id: u8[>..] = [];
+    _vname(id, prefix, name);
+    var m: u8[>..] = [];
+    m.append("Stored text is ");
+    _digits3(m, _char_count(v));
+    m.append(" characters; the limit is ");
+    _digits3(m, max);
+    m.append(".");
+    add_error(errs, id, m);
+}
+
+fn _jr_note_cut(errs: FieldErrors&, prefix: const u8[:], name: const u8[:], cap: i64) {
+    var id: u8[>..] = [];
+    _vname(id, prefix, name);
+    var m: u8[>..] = [];
+    m.append("Stored text was cut to ");
+    _digits3(m, cap);
+    m.append(if cap == 1 { " byte." } else { " bytes." });
+    add_error(errs, id, m);
+}
+
+// What a plain read passes for the errors it does not name; nothing writes to it.
+var _jr_none: FieldErrors = no_errors();
 
 // An integer token of at most 18 digits; a fraction, an exponent or a longer number is skipped.
 fn _jr_int(r: json::Reader&, dst: i64&, warn: i64&) {
@@ -188,6 +254,39 @@ fn _vf_text(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const
     _vf_desc(out, id, help, errs, rich);
     if area { out.push('>'); escape(out, shown); out.append("</textarea>"); } else { out.push('>'); }
     _vf_tail(out, id, help, errs, rich);
+}
+
+// A text field as the generated forms draw it (1.3). kind: 0 a u8[..N] (cap bytes), 1 a gweb::Text, 2 a
+// gweb::LongText (cap characters). Text is an <input> (a <textarea> for editor textarea or markdown), LongText a
+// <textarea>, and u8[..N] a <textarea> above 200 bytes. Only the plain form of a u8[..N] has maxlength: a browser cuts a
+// paste at maxlength with no message, and counts UTF-16 units, not bytes.
+struct _TextUi { field: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:], cap: i64, kind: i64,
+                 required: bool }
+
+fn _vf_text_ui(out: u8[>..]&, prefix: const u8[:], ui: const _TextUi&, value: const u8[:], errs: const FieldErrors&,
+               req: const http::Request&, rich: bool) {
+    var id: u8[>..] = [];
+    _vname(id, prefix, ui.field);
+    var shown: u8[>..] = [];
+    _vf_shown(shown, req, id, errs, rich, value);
+    out.append("<p class=\"gw-field\">");
+    _vf_label(out, id, ui.label);
+    let editor = ui.editor;
+    let named_area = editor == "textarea" || editor == "markdown";
+    let area = if ui.kind == 2 { true } else if ui.kind == 1 { named_area } else { named_area || (editor.len == 0 && ui.cap > 200) };
+    if area {
+        out.append("<textarea id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.push('"');
+    } else {
+        out.append("<input type=\"");
+        escape(out, if editor.len > 0 { editor } else { "text" });
+        out.append("\" id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.append("\" value=\""); escape(out, shown); out.push('"');
+    }
+    if ui.kind == 0 && !rich { out.append(" maxlength=\""); format(out, ui.cap); out.push('"'); }
+    if ui.required { out.append(" required"); }
+    if editor.len > 0 { out.append(" data-editor=\""); escape(out, editor); out.push('"'); }
+    _vf_desc(out, id, ui.help, errs, rich);
+    if area { out.push('>'); escape(out, shown); out.append("</textarea>"); } else { out.push('>'); }
+    _vf_tail(out, id, ui.help, errs, rich);
 }
 
 fn _vf_int(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:],
@@ -339,10 +438,35 @@ fn _vf_item_close(out: u8[>..]&, prefix: const u8[:], field: const u8[:], k: i64
 // ---------------------------------------------------------------- parsing a posted form (the admin forms)
 // The field names are prefix + field; a nested struct adds "name.", a repeater item "name.K.".
 
+// A u8[..N] field. Over N bytes: "Use at most 80 bytes (this is 93).", and dst keeps its value.
 fn _vp_text<T>(req: const http::Request&, prefix: const u8[:], field: const u8[:], dst: T&, errs: FieldErrors&, required: bool) {
     var id: u8[>..] = [];
     _vname(id, prefix, field);
-    form_text(req, id, dst, errs, required);
+    var v: u8[>..] = [];
+    let has = form(req, id, v);
+    if !has || trim(v).len == 0 {
+        if required { add_error(errs, id, "Required."); }
+        return;
+    }
+    if v.len > dst.cap {
+        var m: u8[>..] = [];
+        m.append("Use at most ");
+        _digits3(m, dst.cap);
+        m.append(" bytes (this is ");
+        _digits3(m, v.len);
+        m.append(").");
+        add_error(errs, id, m);
+        return;
+    }
+    dst.clear();
+    dst.append(v);
+}
+
+// A gweb::Text or LongText field: form_text_max, before validate.
+fn _vp_text_max(req: const http::Request&, prefix: const u8[:], field: const u8[:], max: i64, dst: u8[>..]&, errs: FieldErrors&, required: bool) {
+    var id: u8[>..] = [];
+    _vname(id, prefix, field);
+    form_text_max(req, id, dst, errs, required, max);
 }
 
 fn _vp_int(req: const http::Request&, prefix: const u8[:], field: const u8[:], dst: i64&, errs: FieldErrors&, required: bool) {

@@ -68,15 +68,17 @@ fn add_error(errs: FieldErrors&, field: const u8[:], message: const u8[:]) -> bo
 
 // Each check does nothing and returns false when the field already has an error; true when v passes.
 
+// min and max count characters (code points), not bytes (1.3).
 fn check_length(errs: FieldErrors&, field: const u8[:], v: const u8[:], min: i64, max: i64) -> bool {
     if has_error(errs, field) { return false; }
-    if v.len < min {
+    let n = _char_count(v);
+    if n < min {
         var m: u8[..64] = "";
         format(m, "Use at least ", min, " characters.");
         add_error(errs, field, m);
         return false;
     }
-    if v.len > max {
+    if n > max {
         var m: u8[..64] = "";
         format(m, "Use at most ", max, " characters.");
         add_error(errs, field, m);
@@ -196,6 +198,49 @@ fn form_text<T>(req: const http::Request&, field: const u8[:], out: T&, errs: Fi
     out.clear();
     out.append(v);
     return true;
+}
+
+// Fills a growable target, such as a gweb::Text field (1.3). As form_text, but the limit is max characters (code
+// points): "Use at most 120 characters (this is 131).", out left alone.
+fn form_text_max(req: const http::Request&, field: const u8[:], out: u8[>..]&, errs: FieldErrors&, required: bool, max: i64) -> bool {
+    var v: u8[>..] = [];
+    let has = form(req, field, v);
+    if !has || trim(v).len == 0 {
+        if required { add_error(errs, field, "Required."); return false; }
+        return true;
+    }
+    let n = if v.len > max { _char_count(v) } else { 0 };
+    if n > max {
+        var m: u8[>..] = [];
+        m.append("Use at most ");
+        _digits3(m, max);
+        m.append(" characters (this is ");
+        _digits3(m, n);
+        m.append(").");
+        add_error(errs, field, m);
+        return false;
+    }
+    out.clear();
+    out.append(v);
+    return true;
+}
+
+// Code points in UTF-8 text: the bytes that do not continue a character.
+fn _char_count(s: const u8[:]) -> i64 {
+    var n = 0;
+    for c in s { if (c & 0xC0) != 0x80 { n += 1; } }
+    return n;
+}
+
+// 65536 as 65,536.
+fn _digits3(out: u8[>..]&, v: i64) {
+    var d: u8[>..] = [];
+    format(d, if v < 0 { -v } else { v });
+    if v < 0 { out.push('-'); }
+    for c, i in d {
+        if i > 0 && (d.len - i) % 3 == 0 { out.push(','); }
+        out.push(c);
+    }
 }
 
 // Fills an i64 field: parse_int(trim(value)); "Enter a whole number." when it does not parse. Optional absent or blank keeps out.

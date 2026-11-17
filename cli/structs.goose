@@ -7,10 +7,12 @@ namespace structs;
 
 import std;
 
-// The index of the line that starts `KEYWORD NAME {` (struct or enum, after any white space), or -1.
+// The index of the line that starts `KEYWORD NAME {` (struct or enum, after any white space), or -1. A struct may be
+// a `root struct` (is_root).
 fn find_decl(lines, keyword: const u8[:], name: const u8[:]) -> i64 {
     for line, k in lines {
-        let t = trim_start(line);
+        var t = trim_start(line);
+        if keyword == "struct" && starts_with(t, "root ") { t = trim_start(t[5..]); }
         if !starts_with(t, keyword) || t.len <= keyword.len || t[keyword.len] != ' ' { continue; }
         let r = trim_start(t[keyword.len + 1..]);
         if !starts_with(r, name) { continue; }
@@ -19,6 +21,9 @@ fn find_decl(lines, keyword: const u8[:], name: const u8[:]) -> i64 {
     }
     return -1;
 }
+
+// True when lines[k] (a find_decl result) declares a root struct.
+fn is_root(lines, k: i64) -> bool { return k >= 0 && starts_with(trim_start(lines[k]), "root "); }
 
 // F(text, line) for each entry of the braces that open on lines[k]. Returns the index of the line after the closing
 // brace, and whether the brace was closed. Entries are trimmed by the caller; an empty trailing one is skipped.

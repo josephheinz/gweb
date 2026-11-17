@@ -90,7 +90,7 @@ expect_fail "a views group is [a-z][a-z0-9_]*, as in views/widgets/" views/Bad \
   'mkdir views/Bad'
 expect_fail "a view needs \`struct Props {\` in its .goose file" views/widgets/NoProps.goose \
   'echo "import std;" > views/widgets/NoProps.goose; echo "<p></p>" > views/widgets/NoProps.html'
-expect_fail "f64 is not a type views know: Props fields are i64, bool, u8[..N], an enum without payloads, a struct of this file, a repeater of one (last) or ns::T" views/widgets/F.goose:1 \
+expect_fail "f64 is not a type views know: Props fields are i64, bool, u8[..N], gweb::Text, gweb::LongText, an enum without payloads, a struct of this file, a repeater of one or ns::T" views/widgets/F.goose:1 \
   'echo "struct Props { a: f64 }" > views/widgets/F.goose; echo "<p></p>" > views/widgets/F.html'
 expect_fail "a text field is u8[..N] with N a number above 0" views/widgets/F.goose:2 \
   'printf "const N = 5;\\nstruct Props { a: u8[..N] }\\n" > views/widgets/F.goose; echo "<p></p>" > views/widgets/F.html'
