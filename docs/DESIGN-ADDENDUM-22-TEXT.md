@@ -191,5 +191,11 @@ Step 1 of the migration, with the Decision above. Tests: `test/text.sh`. Where i
   may also name an enum (its label) or a foreign field (`ns::gw_label(out, v)`), so a `cms::ItemRef` can label items.
 - **`FieldMeta.ty`** is `gweb::Text` or `gweb::LongText` for those fields, beside `chars`.
 - **Struct errors.** A struct of Props declared `root struct` is a build error (F4).
+- **No Text in a view with `@slot`.** A layout, section or page type with a slot renders the views inside it through
+  `Z` while its Props is a local of the registry's `g_render`, and Goose forbids a growable local in scope at a call
+  into a recursive cycle (spec 7.8). Such a view keeps `u8[..N]`; `gen` says so at the field. Lifting it needs the
+  props owned outside the cycle, or rendering the template in pieces between slots.
+- **`{#var n = e}`** (templates) replaces the `{#let}` the goose-cms section above mentions: a root struct cannot be
+  returned, so helpers fill one by reference.
 - **Enums in templates** (goose-cms ask 2, with this release). Each view enum gets a `format` hook, so `{props.gap}`
   prints its `ENUM_LABELS` label or variant name, and `gweb::enum_name(v)` / `gweb::enum_label(v)` overloads.

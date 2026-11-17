@@ -450,7 +450,9 @@ long as the text is, with no cap to guess and nothing stored inline. A Props wit
 
 `gweb::FieldUi { field: "body", max: 200000 }` changes the limit (`gen` warns `text-max` above 1 MiB, the request
 limit). The limit counts characters (code points) and is checked with a visible error, never by cutting. Text fields
-belong to Props itself: a fieldset or a repeater's item keeps `u8[..N]`.
+belong to Props itself: a fieldset or a repeater's item keeps `u8[..N]`. So does a view whose template has `@slot`:
+its Props is in scope while the slot renders the views inside it, and Goose keeps no growable local across that
+recursion (a build error says so). A `{#var}` in such a template goes after the last `@slot`, or in a block without one.
 
 ```goose
 root struct Props {

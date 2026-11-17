@@ -918,6 +918,22 @@ fn parse(req: const http::Request&, prefix: const u8[:], out: u8[>..]&, errs: gw
     gen_template(v.html, v.ns, base,
                  "fn render<Z, D>(out: u8[>..]&, req: const http::Request&, ctx: const gweb::Ctx&, props: const Props&, doc: const D&, at: i64)",
                  imports, K_VIEW, -1, frags);
+    // A view with @slot renders the views inside it while its Props is in scope, and Goose keeps no growable local
+    // across that recursion (spec 7.8), so its text is u8[..N].
+    var slotted = false;
+    for l in split(view_slots, '\n') {
+        let parts = split(l, '\t');
+        if parts.len == 4 && parts[0] == v.group && parts[1] == v.name { slotted = true; }
+    }
+    if slotted {
+        for f in fields {
+            if f.owner == "Props" && f.chars {
+                var m: u8[>..] = [];
+                format(m, "a view with @slot cannot hold ", f.ty, ": its Props stays on the stack while the slot renders the views inside it; use u8[..N]");
+                err(v.goose, f.line, m);
+            }
+        }
+    }
     return errors == before;
 }
 
