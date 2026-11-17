@@ -27,8 +27,16 @@ export GOOSE="$goose"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/gweb-hooks.XXXXXX")
 WORK=$(cd "$WORK" && pwd -P)   # gweb names folders as getcwd does (/private/var on macOS)
 DEVPID=""
+# Stop gweb dev and its server: the process group where job control made one (bash), else the process and its
+# children (dash runs `set -m` scripts without a group); never wait without a deadline.
+stopdev() {
+  kill -TERM -"$DEVPID" 2>/dev/null || { pkill -TERM -P "$DEVPID" 2>/dev/null; kill -TERM "$DEVPID" 2>/dev/null; }
+  for i in $(seq 1 20); do kill -0 "$DEVPID" 2>/dev/null || break; sleep 0.5; done
+  kill -KILL -"$DEVPID" 2>/dev/null || { pkill -KILL -P "$DEVPID" 2>/dev/null; kill -KILL "$DEVPID" 2>/dev/null; }
+  DEVPID=""
+}
 cleanup() {
-  [ -n "$DEVPID" ] && kill -TERM -"$DEVPID" 2>/dev/null
+  [ -n "$DEVPID" ] && stopdev
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -155,7 +163,7 @@ set +m
 up=""
 for i in $(seq 1 60); do
   sleep 0.5
-  if curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then up=yes; break; fi
+  if curl -s --max-time 5 -o /dev/null "http://127.0.0.1:$PORT/"; then up=yes; break; fi
 done
 check "$([ -n "$up" ] && echo ok)" "the dev server answers: $(cat "$WORK/dev.out")"
 waitfor() {   # waitfor N: until the dev output has N rebuilds and the last one finished
@@ -187,10 +195,8 @@ sleep 3
 for i in $(seq 1 30); do grep -q 'hook `hk check` failed' "$WORK/dev.out" && break; sleep 0.5; done
 check "$(grep -q 'hook `hk check` failed' "$D/.gweb.dev/errors.txt" && grep -q 'old server keeps running' "$WORK/dev.out" && echo ok)" \
   "a failing hook in gweb dev: errors.txt, and the old server keeps running"
-check "$([ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")" = 200 ] && echo ok)" "the old server still answers"
-kill -TERM -"$DEVPID" 2>/dev/null
-wait "$DEVPID" 2>/dev/null
-DEVPID=""
+check "$([ "$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")" = 200 ] && echo ok)" "the old server still answers"
+stopdev
 
 echo "hooks: $pass passed, $fail failed"
 [ "$fail" = 0 ]
