@@ -96,7 +96,8 @@ hook views cms check
 - **`hook PATHS COMMAND`**: `gweb build`, `start`, `export` and `dev` run it before generating. `PATHS` are the app's
   folders or files, split by commas. `gweb dev` runs every hook before its first build, then only those whose paths
   changed, and watches the paths. Packages' hooks run first, then the app's. A failing hook stops the build: its
-  output and the failing line are shown like a compile error, and `gweb dev` keeps the old server.
+  output comes first, then `` gweb: `cms check` failed (exit 1, hook from package cms) `` (an app's hook:
+  `gweb.packages:N: error: hook ... failed`), and `gweb dev` keeps the old server.
   `--no-hooks` or `GWEB_HOOKS=0` skips them.
 
 Commands and hooks run in the app's folder, with `.gweb.tools/bin` first on `PATH`, `GWEB_APP` (the app),

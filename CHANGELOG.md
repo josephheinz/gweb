@@ -5,6 +5,8 @@
 - New: a template compiler error is `file:line:col`, with an excerpt of about 80 characters around the column and a caret, not the whole generated-from line. Test: `test/devbuild.sh`.
 - New: goose's `struct Props has no field x` names whose Props it is and lists its fields: `views/items/TeamMember: Props has no field "rol" (it has: title, role, photo, bio)`, or `app/page.goose: ...` for a page's. Test: `test/devbuild.sh`.
 - New: `gweb test` condenses compiler errors as `build` does (`--raw-errors` shows goose's output).
+- Change: a failing package hook ends with `` gweb: `cms check` failed (exit 1, hook from package cms) `` after its own output, instead of an error at the package's `gweb.package` line. An app's hook still names its `gweb.packages` line. Test: `test/hooks.sh`.
+- Docs: Goose imports load a file into the whole program, so a view without `import lib.site;` still sees `site::` when another file imports it (README, `lib/`).
 
 ## v1.4.0
 

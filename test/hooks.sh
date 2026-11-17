@@ -9,7 +9,8 @@
 # 2. The tool: built once into .gweb.tools/, its outside import pointed at the package's Goose package, rebuilt when
 #    the package changes; the package folder is not written to. A copied gweb (the Dockerfile's) builds it too.
 # 3. gweb gen runs no hook; gweb build runs the package's then the app's; --no-hooks and GWEB_HOOKS=0 skip them.
-# 4. A failing hook stops gweb build and gweb dev --once, with its stderr in errors.txt.
+# 4. A failing hook stops gweb build and gweb dev --once, with its stderr in errors.txt, first; the summary names a
+#    package hook's package (not its gweb.package), an app hook's gweb.packages line.
 # 5. Bad lines, each in its own copy.
 # 6. gweb dev runs a hook again only when its paths change, and what the hook writes is not a change.
 #
@@ -113,14 +114,23 @@ check "$([ ! -f "$A/hook.log" ] && echo ok)" "--no-hooks and GWEB_HOOKS=0 skip t
 echo BAD > "$A/content/b.txt"
 out=$("$GWEB" -C "$A" build 2>&1)
 st=$?
-check "$([ $st = 1 ] && has "$out" 'content/b.txt:1: error: BAD is not allowed' && has "$out" "gweb.package:8: error: hook \`hk check\` failed (exit 1)" && echo ok)" \
+check "$([ $st = 1 ] && has "$out" 'content/b.txt:1: error: BAD is not allowed' && has "$out" 'gweb: `hk check` failed (exit 1, hook from package hk)' && echo ok)" \
   "a failing hook stops gweb build with its stderr: $out"
+check "$(! has "$out" 'gweb.package:' && [ "$(printf '%s\n' "$out" | grep -n 'BAD is not allowed' | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n 'failed (exit 1' | cut -d: -f1)" ] && echo ok)" \
+  "the hook's output comes first, and the summary names the package, not its gweb.package"
 check "$(! has "$out" 'built .gweb/server' && echo ok)" "nothing is built after a failing hook"
 "$GWEB" -C "$A" dev --once >/dev/null 2>&1
 st=$?
-check "$([ $st = 1 ] && grep -q '>   1 | BAD' "$A/.gweb.dev/errors.txt" && grep -q 'hook `hk check` failed' "$A/.gweb.dev/errors.txt" && echo ok)" \
+check "$([ $st = 1 ] && grep -q '>   1 | BAD' "$A/.gweb.dev/errors.txt" && grep -q '^gweb: `hk check` failed (exit 1, hook from package hk)' "$A/.gweb.dev/errors.txt" && echo ok)" \
   "gweb dev --once: exit 1, errors.txt has the hook's error with its excerpt"
 rm "$A/content/b.txt"
+# The app's own hook: its gweb.packages line is the user's, so the summary leads with it.
+fresh apphook
+printf 'hook content echo app says no >&2; exit 2\n' >> "$WORK/apphook/app/gweb.packages"
+out=$("$GWEB" -C "$WORK/apphook/app" build 2>&1)
+st=$?
+check "$([ $st = 1 ] && has "$out" 'app says no' && has "$out" "gweb.packages:6: error: hook \`echo app says no >&2; exit 2\` failed (exit 2)" && echo ok)" \
+  "a failing app hook names its gweb.packages line: $out"
 
 # 5. Bad lines.
 refused() {
@@ -192,8 +202,8 @@ check "$([ "$(tr '\n' ' ' < "$D/hook.log")" = "hk app hk app app " ] && echo ok)
 check "$([ "$(grep -c 'change seen' "$WORK/dev.out")" = 3 ] && echo ok)" "what a hook wrote did not start a rebuild: $(grep -c 'change seen' "$WORK/dev.out") rebuilds"
 echo BAD > "$D/content/d.txt"
 sleep 3
-for i in $(seq 1 30); do grep -q 'hook `hk check` failed' "$WORK/dev.out" && break; sleep 0.5; done
-check "$(grep -q 'hook `hk check` failed' "$D/.gweb.dev/errors.txt" && grep -q 'old server keeps running' "$WORK/dev.out" && echo ok)" \
+for i in $(seq 1 30); do grep -q '`hk check` failed' "$WORK/dev.out" && break; sleep 0.5; done
+check "$(grep -q '`hk check` failed (exit 1, hook from package hk)' "$D/.gweb.dev/errors.txt" && grep -q 'old server keeps running' "$WORK/dev.out" && echo ok)" \
   "a failing hook in gweb dev: errors.txt, and the old server keeps running"
 check "$([ "$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")" = 200 ] && echo ok)" "the old server still answers"
 stopdev

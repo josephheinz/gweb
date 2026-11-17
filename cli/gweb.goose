@@ -1604,8 +1604,17 @@ fn run_hook(h: const Hook&) -> bool {
     if json_diag { if out.len > 0 { say_error(trim(out)); } } else { write_stderr(out); }
     note_errors(out);
     var m: u8[>..] = [];
-    format(m, "hook `", h.text, "` failed (exit ", status, ")");
-    err(h.path, h.line, m);
+    if h.pkg.len == 0 {
+        format(m, "hook `", h.text, "` failed (exit ", status, ")");
+        err(h.path, h.line, m);
+        return false;
+    }
+    // A package's hook: its own output (above) says what is wrong; the package's gweb.package is not the user's file.
+    format(m, "gweb: `", h.text, "` failed (exit ", status, ", hook from package ", h.pkg, ")");
+    say_error(m);
+    m.push('\n');
+    note_errors(m);
+    errors += 1;
     return false;
 }
 
