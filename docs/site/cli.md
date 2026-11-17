@@ -3,7 +3,7 @@
 ```
 gweb [-C dir] new <dir>      a starter project
 gweb gen                     write .gweb/ only
-gweb build [--debug]         gen, then goose build to .gweb/server
+gweb build [--debug|--dev]   gen, then goose build to .gweb/server
 gweb start [flags]           build and run
 gweb dev [flags]             build, run, rebuild on change
 gweb export [-o DIR]         build, then write the site as static files
@@ -26,7 +26,7 @@ gweb help                    the usage
 |---|---|
 | `new` | writes a starter project, with a `.gitignore`, a `Dockerfile` and a `.dockerignore`. The folder must be empty or missing. |
 | `gen` | writes `.gweb/` and stops. |
-| `build` | builds `.gweb/server`. `--debug` is passed to `goose build`. |
+| `build` | builds `.gweb/server`. `--debug` is passed to `goose build`. `--dev` builds what `gweb dev` runs: unoptimized C, `public/` read from disk (run it from the project folder). |
 | `start` | builds and runs `.gweb/server`. The flags after `start` go to the server (below). |
 | `dev` | like `start`, with the dev defaults below. Rebuilds on change under `app/`, `lib/`, `public/`, `components/`, `locales/`, `stores/` and `views/`, and in path packages (the same folders but `locales/`). |
 | `export` | builds, then renders the site in process and writes it to `-o DIR` (default `out/`): HTML files, static files, `sitemap.xml`, `robots.txt`. No port. Run it with `SITE_URL` set. |
@@ -77,6 +77,12 @@ access log, and `--drain-ms 200`. The flags and variables still win, `.env` file
 - `gweb dev --host 0.0.0.0` (or `GWEB_HOST=0.0.0.0`) opens the dev server to the network. It carries the dev overlay,
   `/__gweb/id` and a dev secret, so do that on a network you trust.
 - `start` and the server keep `0.0.0.0`, because a container needs it.
+
+Its builds are dev builds ([docs/dev-builds.md](../dev-builds.md)): unoptimized C, about 5 times faster to compile; no
+compile when the C is unchanged; and none when only `public/` changed, because the server reads `public/` from disk.
+
+Compiler errors show once each, with the source line. `--raw-errors` (or `GWEB_RAW_ERRORS=1`) on `build`, `start`,
+`export`, `dev` or `check` shows goose's whole output instead.
 
 ## `gweb update`
 

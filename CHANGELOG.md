@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- New: dev builds (`gweb dev`, and `gweb build --dev`): Goose `-O0` and `cc -O0`, the C compile skipped when the C is unchanged, and `public/` served from disk so that a change there alone restarts the same binary. A goose-cms site: a template change 28 s to 5.8 s, a CSS change 28 s to 0.04 s. Production builds are unchanged. See `docs/dev-builds.md`, which also has the findings and a proposal for incremental builds in goose. Test: `test/devbuild.sh`.
+- New: compiler errors show once each, with the source line, without the instantiation chain or the generated function (review finding 7). `--raw-errors` or `GWEB_RAW_ERRORS=1` shows goose's output. Test: `test/devbuild.sh`.
+
 ## v1.3.0
 
 - New: `tool`, `run` and `hook` lines in `gweb.packages` and a package's `gweb.package` (a package with them says `gweb 1.3`). `gweb run NAME [args]` runs a command; a hook runs before `gweb build`, `start`, `export` and `dev` when its paths change, and a failing hook stops the build like a compile error. A tool is a Goose program gweb builds into `.gweb.tools/bin/`, with the app's library sources. `--no-hooks` or `GWEB_HOOKS=0` skips hooks. Add `.gweb.tools/` to `.gitignore`. See Addendum 21. Test: `test/hooks.sh`.

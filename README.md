@@ -323,10 +323,11 @@ precision in the browser. Component state lives in the page only. Handlers get n
 ```
 gweb [-C dir] new <dir>      a starter project
 gweb gen                     write .gweb/ only
-gweb build [--debug]         gen, then goose build to .gweb/server
+gweb build [--debug|--dev]   gen, then goose build to .gweb/server; --dev: what gweb dev builds (docs/dev-builds.md)
 gweb start [flags]           build and run; the server flags below
 gweb export [-o DIR]         build, then write the site as static files to DIR (default out/)
 gweb dev [flags]             build, run on 127.0.0.1:60053 with 2 workers and the access log, rebuild on change
+                             (unoptimized C; a public/ change alone needs no compile)
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gweb.test/; leaves .gweb/ alone)
 gweb check                   goose check on a copy of the site; errors name .gshtml and page.html lines
