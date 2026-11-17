@@ -5,6 +5,7 @@
 #define _DARWIN_C_SOURCE
 #include "goose.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <ftw.h>
 #include <signal.h>
@@ -159,4 +160,45 @@ int64_t gweb_tree_stamp(gweb_bytes path, int64_t *count) {
     free(p);
     *count += stamp_count;
     return stamp_newest;
+}
+
+/* Like gweb_tree_stamp for a tool's sources: skips names that start with a dot (.git, .gweb*) and does not
+   follow a link to a folder, so an app inside the package, or a tree of links back into it, is not walked. */
+static void src_walk(const char *dir, int64_t *count, int64_t *newest, int depth) {
+    if (depth > 32) return;
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        size_t n = strlen(dir) + strlen(e->d_name) + 2;
+        char *p = malloc(n);
+        if (!p) break;
+        snprintf(p, n, "%s/%s", dir, e->d_name);
+        struct stat st;
+        if (lstat(p, &st) == 0) {
+            int is_link = S_ISLNK(st.st_mode);
+            if (is_link && stat(p, &st) != 0) { free(p); continue; }
+            (*count)++;
+#ifdef __APPLE__
+            int64_t t = (int64_t)st.st_mtimespec.tv_sec * 1000000000 + st.st_mtimespec.tv_nsec;
+#else
+            int64_t t = (int64_t)st.st_mtim.tv_sec * 1000000000 + st.st_mtim.tv_nsec;
+#endif
+            /* A folder's own mtime moves when a dot entry (.gweb) is made in it; its files tell. */
+            if (!S_ISDIR(st.st_mode) && t > *newest) *newest = t;
+            if (S_ISDIR(st.st_mode) && !is_link) src_walk(p, count, newest, depth + 1);
+        }
+        free(p);
+    }
+    closedir(d);
+}
+
+int64_t gweb_src_stamp(gweb_bytes path, int64_t *count) {
+    char *p = cstr(path);
+    if (!p) return 0;
+    int64_t newest = 0;
+    src_walk(p, count, &newest, 0);
+    free(p);
+    return newest;
 }

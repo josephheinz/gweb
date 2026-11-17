@@ -8,7 +8,7 @@ Three gaps. goose-cms needs `cms check` run after a view changes, and developers
 | Item | Where |
 |---|---|
 | `tool`, `run` and `hook` lines; `gweb run`; hooks in `build`, `start`, `export` and `dev` | `cli/gweb.goose` (section "tools, commands and hooks") |
-| A file stamp for a hook that watches a file (macOS `nftw` refuses one) | `gweb_tree_stamp` in `cli/proc.c` |
+| A file stamp for a hook that watches a file (macOS `nftw` refuses one); a tool's source stamp | `gweb_tree_stamp`, `gweb_src_stamp` in `cli/proc.c` |
 | `gweb update [TAG]` | `cli/gweb.goose` (section "update") |
 | The stale line | `SELF_FILES`, `SELF_DATA`, `warn_stale` in `cli/gweb.goose` |
 | Tests | `test/hooks.sh` and `test/hooks/`, `test/update.sh` |
@@ -51,7 +51,9 @@ Every command and hook runs in the **app's folder**, whoever declared it. That i
 
 A command names a tool by its `NAME` as a word. Before the command runs, gweb builds each tool it names into
 `.gweb.tools/bin/NAME` (git-ignored by `gweb new`), when the binary is missing or its key changed. The key is the
-gweb version, the rewritten root, and the folder's stamp (a path package or the app). A git package is a fixed tag, so
+gweb version, the rewritten root, and the stamp of the folder's files (a path package, or the tool's folder in the
+app): dot entries (`.git`, `.gweb*`) are skipped and links to folders are not followed, so an app inside its package
+(goose-cms's `examples/site`) and the link tree do not count. A git package is a fixed tag, so
 only the root decides.
 
 A package's tool must build outside the package's own checkout layout. goose-cms's `cli/cms.goose` imports
@@ -160,4 +162,5 @@ version. The binary grows by 0.6 MB; the check reads 0.8 MB and takes under 5 ms
 
 - Per-package opt-out of a hook (`--no-hooks` is all or nothing).
 - Globs in `PATHS`.
-- A tool's stamp walks the whole path package, so an edit anywhere in it rebuilds the tool (about 3 s for goose-cms).
+- A tool's stamp covers the whole path package, so an edit anywhere in it (a database in an example app included)
+  rebuilds the tool on its next use (about 3 s for goose-cms).

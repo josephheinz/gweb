@@ -36,6 +36,7 @@ extern fn c_chdir(path: const u8[:]) -> i32 = "gweb_chdir";
 extern fn c_cwd(out: u8[>..]&) -> i32 = "gweb_cwd";
 extern fn c_remove_tree(path: const u8[:]) -> i32 = "gweb_remove_tree";
 extern fn c_tree_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_tree_stamp";
+extern fn c_src_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_src_stamp";
 
 // gzip.c: appends the gzip of data to out; 0 when it failed.
 extern fn c_gzip(data: const u8[:], out: u8[>..]&) -> i32 = "gweb_gzip";
@@ -1240,7 +1241,7 @@ fn tool_tree(pkg_dir: const u8[:], file: const u8[:], dst: const u8[:], root: co
 }
 
 // Builds .gweb.tools/bin/NAME when it is missing or its sources changed. A git package is a fixed tag, so only
-// the root decides; a path package or the app is stamped by its folder.
+// the root decides; a path package (or the tool's folder in the app) is stamped by its files, dot folders left out.
 fn ensure_tool(t: const Tool&) -> bool {
     var cwd: u8[>..] = [];
     c_cwd(cwd);
@@ -1255,7 +1256,7 @@ fn ensure_tool(t: const Tool&) -> bool {
     let fdir = orig[..rfind(orig, "/")];
     let root = if t.pkg.len > 0 { tool_root(src, fdir) } else { copy(src) };
     var count = 0;
-    let st = if t.git { 0 } else { c_tree_stamp(if t.pkg.len > 0 { t.dir[..] } else { fdir }, count) };
+    let st = if t.git { 0 } else { c_src_stamp(if t.pkg.len > 0 { t.dir[..] } else { fdir }, count) };
     var key: u8[>..] = [];
     format(key, trim(EMBEDDED_VERSION), "\n", orig, "\n", st, " ", count, "\n", root);
     var have: u8[>..] = [];
