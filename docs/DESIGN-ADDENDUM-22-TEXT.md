@@ -44,6 +44,19 @@ passes, forms cannot append, items still cannot hold it, and `..` spreads into e
 
 **E. A `Text` with one default cap (`u8[..4096]`).** One guess instead of many. Still inline, still cut. Rejected.
 
+## Decision (2026-11-17): Text and LongText
+
+Two types replace the one `gweb::Text` above. Both are `u8[>..]`; everything else in (B) holds.
+
+| Type | Default max (characters) | Form control |
+| --- | --- | --- |
+| `gweb::Text` | 128 | `<input>` |
+| `gweb::LongText` | 65,536 | `<textarea>` (or the field's `editor`) |
+
+- `FieldUi.max` still overrides either default.
+- `Text` over 128 needs `max` set and stays an `<input>`; a long body is a `LongText`.
+- The rule "`Text` above 200 draws a `<textarea>`" (Forms) is dropped: the type picks the control.
+
 ## The recommendation (B)
 
 ### Declaring
