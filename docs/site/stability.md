@@ -100,7 +100,7 @@ The template tags in the README Templates table (`{expr}`, `{#raw}`, `{#if}`, `{
 (it may grow, not shrink). `gw-target`, `gw-key`, `gw-loading`, the `GW-Fragment` request header, the `GW-Auth: 401` request header, the `gw:unauthorized` event and the `GW-Login` reply header (1.1), and the
 `gw_read`, `gw_write`, `gw_field` and `gw_parse` conventions in views, `ITEM_LABEL`, and the generated `g_form_req` and `.act` button names (1.1).
 Added in 1.2: `gw-trigger`, `gw-url`, `ENUM_LABELS` and `editor: "radio"` for enum fields.
-Added in 1.4: `gweb::Text`, `gweb::LongText`, `root struct Props`, `FieldUi.max`, `FieldMeta.chars`, `read_errs` and
+Added in 1.4: the `{#var n = e}` tag, `gweb::Text`, `gweb::LongText`, `root struct Props`, `FieldUi.max`, `FieldMeta.chars`, `read_errs` and
 `g_read_errs`, `gweb::enum_name` and `gweb::enum_label`, an enum of a view printing its label in `{expr}`, and
 `ITEM_LABEL` of an enum or a foreign field (`gw_label`). `g_form_req` draws no `maxlength`, and `check_length` counts
 characters.

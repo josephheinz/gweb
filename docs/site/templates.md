@@ -23,6 +23,7 @@ The compiler type-checks them, so a wrong field name is a build error.
 | `{#if e}` `{#else if e}` `{#else}` `{/if}` | conditions |
 | `{#for x in e}`, `{#for x, i in e}`, `{/for}` | loops |
 | `{#let n = e}` | a local |
+| `{#var n = e}` | a mutable local (1.4), for a helper that fills it by reference: `{#var p = v_types_Post::Props { .. }}{#if site::props_Post(c, p)}{p.title}{/if}`; not in components |
 | `@f(a)`, `@ns::f(a)` | calls `f(out, a)` |
 | `@Name(expr)` | a component |
 | `@slot()` | the page, in a layout |
