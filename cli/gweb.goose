@@ -2225,6 +2225,14 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
         out.append("let ");
         put_expr(out, segs, inner[5..], b + 5);
         out.append("; ");
+    } else if starts_with(inner, "#var ") {
+        // A mutable local (1.4), so a helper can fill it by reference: {#var p = T { .. }}{#if fill(c, p)}.
+        if find(inner[5..], "=") < 0 { err(path, ln, "{#var n = e} needs a name and a value"); }
+        out.append("var ");
+        put_expr(out, segs, inner[5..], b + 5);
+        out.append("; ");
+    } else if inner == "#var" {
+        err(path, ln, "{#var n = e} needs a name and a value");
     } else if inner == "#else if" {
         err(path, ln, "{#else if e} needs an expression");
     } else if inner == "#for" {

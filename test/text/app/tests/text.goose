@@ -187,6 +187,7 @@ fn test_enum_in_templates(t: gweb::Tester&) {
     var out: u8[>..] = [];
     gweb::expect(t, views::types_render(out, req, ctx, "Article", "{\"title\":\"Hi <b>\"}", doc, 0, fill), "renders");
     has(t, out, "<article class=\"tone-Warm\"><h1>Hi &lt;b&gt;</h1><p class=\"tone\">Warm tone</p><p class=\"raw\">Warm</p>", "label, and the name");
+    has(t, out, "</article><p class=\"var\">Warm tone</p>", "{#var} is a mutable local a function fills by reference");
     out.clear();
     views::types_render(out, req, ctx, "Article", "{\"title\":\"Hi\",\"tone\":\"Cool\"}", doc, 0, fill);
     has(t, out, "<p class=\"tone\">Cool</p>", "a variant with no label prints its name");

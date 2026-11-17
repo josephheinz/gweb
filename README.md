@@ -176,6 +176,7 @@ Rules:
 | `{#if e}` `{#else if e}` `{#else}` `{/if}` | conditions |
 | `{#for x in e}`, `{#for x, i in e}`, `{/for}` | loops |
 | `{#let n = e}` | a local |
+| `{#var n = e}` | a mutable local (1.4), for a helper that fills it by reference: `{#var p = v_types_Post::Props { .. }}{#if site::props_Post(c, p)}{p.title}{/if}`; not in components |
 | `@f(a)`, `@ns::f(a)`, `@f()` | calls `f(out, a)` |
 | `@Name(expr)` | a component (a capitalized name with no `::`) |
 | `@slot()` | the page, in a layout |
@@ -449,7 +450,9 @@ long as the text is, with no cap to guess and nothing stored inline. A Props wit
 
 `gweb::FieldUi { field: "body", max: 200000 }` changes the limit (`gen` warns `text-max` above 1 MiB, the request
 limit). The limit counts characters (code points) and is checked with a visible error, never by cutting. Text fields
-belong to Props itself: a fieldset or a repeater's item keeps `u8[..N]`.
+belong to Props itself: a fieldset or a repeater's item keeps `u8[..N]`. So does a view whose template has `@slot`:
+its Props is in scope while the slot renders the views inside it, and Goose keeps no growable local across that
+recursion (a build error says so). A `{#var}` in such a template goes after the last `@slot`, or in a block without one.
 
 ```goose
 root struct Props {
