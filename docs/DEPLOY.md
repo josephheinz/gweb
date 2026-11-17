@@ -34,6 +34,9 @@ docker run -d --name mysite -p 3000:3000 -v mysite-data:/app/data --stop-timeout
   `libcurl4-openssl-dev`, and the runtime `libcurl4` and `ca-certificates`; for goose-postgres, `libpq-dev` and
   `libpq5`. Name others with `--build-arg APT_BUILD="libfoo-dev"` (build stage) and `--build-arg APT_RUN="libfoo1"`
   (runtime). A Dockerfile from an older `gweb new` has none of this: copy `deploy/Dockerfile` again.
+- Hooks (1.3). The image's `gweb build` runs the app's and packages' hooks, so code they generate (goose-cms's
+  `cms check`) is current. A `tool` builds in the build stage with its goose and gcc, fetching pinned packages as the
+  server build does. Only the server's C libraries are installed: a tool that links another needs it in `APT_BUILD`.
 - The container runs as a non-root user (uid 10001). `/app/data` is a volume owned by it. A named volume
   copies that ownership; for a bind mount run `chown 10001 <dir>`.
 - `ENV PORT=3000 TZ=UTC GWEB_LOG_FORMAT=json`. Add flags after the image name or set `GWEB_*` variables.

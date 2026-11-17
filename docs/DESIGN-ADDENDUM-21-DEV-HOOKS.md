@@ -81,8 +81,12 @@ Rejected: building in the package folder (writes into a cache or a checkout); co
 - The packages' hooks run first, in `gweb.packages` order, then the app's, in file order. The app has the last word.
 - A hook's paths join what `gweb dev` watches. What hooks write is not a change: the dev stamp is taken after them, so
   `cms check` rewriting `lib/site.goose` starts no second rebuild.
-- `--no-hooks` (`build`, `start`, `export`, `dev`) or `GWEB_HOOKS=0` skips them, for a container build where the
-  tool cannot be built.
+- `--no-hooks` (`build`, `start`, `export`, `dev`) or `GWEB_HOOKS=0` skips them.
+- **Docker.** The image's `gweb build` runs the hooks: `cms check` writes code the build needs. The tool builds there
+  with the image's goose and gcc. The copied gweb has no checkout, so the rewritten imports name the pinned tags, which
+  goose fetches as it does for the server. The Dockerfile installs C libraries for the server's root only: a tool that
+  links another (libcurl, libpq) needs it in `APT_BUILD`. goose-cms's tool needs only SQLite, which the image has.
+  Not run in Docker here (no docker on this machine); `test/hooks.sh` builds a tool with a copied gweb.
 
 ## D5. A failing hook
 
@@ -151,16 +155,16 @@ server, the Dockerfile) and compares each with the checkout at start. Any differ
 gweb is older than its source in DIR: run gweb update (or goose build -o gweb cli/gweb.goose)
 ```
 
-once on stderr, and the command goes on. Content, not mtimes: a `git checkout` touches files without changing them,
+once on stderr, and the command goes on. When `VERSION` differs too (another release, whose generated code does not
+match the library), the line ends the command with exit 1; `help` and `version` still run. Content, not mtimes: a `git checkout` touches files without changing them,
 and a copied binary has no build time to trust. A copied gweb with no checkout prints nothing. It replaces the
-`VERSION` check, which stopped with "rebuild gweb" only when `VERSION` differed and missed a stale binary of the same
-version. The binary grows by 0.6 MB; the check reads 0.8 MB and takes under 5 ms. `test/update.sh` fails if a file in
+`VERSION` check, which stopped with "rebuild gweb" and missed a stale binary of the same version. The binary grows by 0.6 MB; the check reads 0.8 MB and takes under 5 ms. `test/update.sh` fails if a file in
 `cli/` or `client/` is missing from the list. `update` prints its own lines instead; `lsp-gen` and `test-css` skip it
 (machine-read output).
 
 ## Not done
 
-- Per-package opt-out of a hook (`--no-hooks` is all or nothing).
+- Possible later: turning off one package's hook from the app (`--no-hooks` is all or nothing).
 - Globs in `PATHS`.
 - A tool's stamp covers the whole path package, so an edit anywhere in it (a database in an example app included)
   rebuilds the tool on its next use (about 3 s for goose-cms).

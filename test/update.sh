@@ -10,7 +10,8 @@
 # 1. The latest release, not the prerelease: checkouts, a fast-forward, the build and the link on PATH.
 # 2. Up to date. 3. A changed checkout is refused. 4. A given tag. 5. An unknown tag. 6. No network.
 # 7. A checkout past the release. 8. A branch the release does not fast-forward. 9. A failed build.
-# 10. No checkout. 11. The stale line, and every file the binary is built from is in SELF_FILES.
+# 10. No checkout. 11. The stale line (another VERSION stops the command), and every file the binary is built from
+#     is in SELF_FILES.
 #
 # Needs git, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
 set -u
@@ -143,6 +144,13 @@ check "$(has "$out" "gweb is older than its source in $L/gweb: run gweb update (
 out=$("$G" -C "$WORK" routes 2>&1)
 check "$([ "$(printf '%s\n' "$out" | grep -c 'older than its source')" = 1 ] && echo ok)" "one line, on any command: $out"
 git -C "$L/gweb" checkout -q -- cli/pins.goose
+echo 9.9.9 > "$L/gweb/VERSION"
+out=$("$G" -C "$WORK" routes 2>&1)
+check "$([ $? = 1 ] && has "$out" "gweb is older than its source in $L/gweb" && ! has "$out" 'no app/' && echo ok)" \
+  "another VERSION stops the command with the stale line: $out"
+out=$("$G" version 2>&1)
+check "$([ $? = 0 ] && has "$out" 'older than its source' && has "$out" 'gweb 1.' && echo ok)" "gweb version still runs, after the line: $out"
+git -C "$L/gweb" checkout -q -- VERSION
 missing=""
 for f in $(cd "$ROOT" && ls cli/* client/*.js) VERSION; do
   case "$f" in cli/gzip_test.c) continue ;; esac

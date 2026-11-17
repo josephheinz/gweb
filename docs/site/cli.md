@@ -102,6 +102,7 @@ It asks nothing, prints each thing it did, or `gweb update: up to date (v1.3.0)`
 - It finds the gweb checkout beside its own binary, or in `$GWEB_HOME`.
   When the checkout differs from what the binary was built from, every command first prints
   `gweb is older than its source in DIR: run gweb update (or goose build -o gweb cli/gweb.goose)`.
+  When its `VERSION` differs too, the command stops there (exit 1); `help` and `version` still run.
 - `GWEB_SRC`, `GWEB_NET` and `GWEB_SQLITE` override a package source.
 - Generated files go in `.gweb/`, `.gweb.dev/`, `.gweb.test/`, `.gweb.check/`, `.gweb.lsp/` and `.gweb.tools/`; uploads spool to
   `.gweb.uploads/`. Keep them out of git (`gweb new` does). They are not part of any stable interface.

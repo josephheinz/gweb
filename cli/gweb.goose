@@ -4215,12 +4215,19 @@ fn stale_home() -> u8[>..] {
     return home;
 }
 
-fn warn_stale() {
+// A different VERSION is a different release, whose generated code does not match the library: with stop, that
+// line ends the command (exit 1). help and version go on, as they did before.
+fn warn_stale(stop: bool) {
     let home = stale_home();
     if home.len == 0 { return; }
     var msg: u8[>..] = [];
     format(msg, "gweb is older than its source in ", home, ": run gweb update (or goose build -o gweb cli/gweb.goose)\n");
     write_stderr(msg);
+    var path: u8[>..] = [];
+    format(path, home, "/VERSION");
+    var file: u8[>..] = [];
+    read_file(path, file);
+    if stop && trim(file) != trim(EMBEDDED_VERSION) { exit(1); }
 }
 
 // ---------------------------------------------------------------- CSS minification
@@ -6124,7 +6131,10 @@ fn main() {
     self_bin = self_path(a[0]);
     if cmd == "semver-cmp" { semver_cmd(rest); return; }
     if cmd == "update" { update_cmd(rest); return; }
-    if cmd != "lsp-gen" && cmd != "test-css" { warn_stale(); }
+    if cmd != "lsp-gen" && cmd != "test-css" {
+        warn_stale(cmd != "help" && cmd != "--help" && cmd != "-h" && cmd != "version" && cmd != "--version" &&
+                   !has_flag(rest, "--help") && !has_flag(rest, "-h"));
+    }
     if cmd == "help" || cmd == "--help" || cmd == "-h" { print_usage(); return; }
     // gweb run passes what follows the name to the command.
     let own = if cmd == "run" && rest.len > 0 { rest[..1] } else { rest };

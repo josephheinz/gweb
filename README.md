@@ -385,7 +385,8 @@ Warning codes:
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
 package beside its own binary (or `$GWEB_HOME`). When the checkout differs from
 what the binary was built from, every command first prints
-`gweb is older than its source in DIR: run gweb update (or goose build -o gweb cli/gweb.goose)`. Build `gweb` with:
+`gweb is older than its source in DIR: run gweb update (or goose build -o gweb cli/gweb.goose)`, and stops there
+when the `VERSION` differs too. Build `gweb` with:
 
 ```
 goose build -o gweb cli/gweb.goose

@@ -7,7 +7,7 @@
 # two commands and a hook on content/. The app has its own commands and a hook.
 # 1. gweb run: the list, arguments, the app's command over a package's, the exit status, an unknown name.
 # 2. The tool: built once into .gweb.tools/, its outside import pointed at the package's Goose package, rebuilt when
-#    the package changes; the package folder is not written to.
+#    the package changes; the package folder is not written to. A copied gweb (the Dockerfile's) builds it too.
 # 3. gweb gen runs no hook; gweb build runs the package's then the app's; --no-hooks and GWEB_HOOKS=0 skip them.
 # 4. A failing hook stops gweb build and gweb dev --once, with its stderr in errors.txt.
 # 5. Bad lines, each in its own copy.
@@ -80,6 +80,13 @@ sleep 1
 echo "// touched" >> "$WORK/ok/pkg/lib/text.goose"
 out=$("$GWEB" -C "$A" run check 2>&1)
 check "$(has "$out" 'building tool hk' && echo ok)" "a change in the path package builds the tool again: $out"
+
+# A copied gweb, with no checkout (as in the Dockerfile), builds the tool too.
+fresh lone
+mkdir -p "$WORK/lone/bin"
+cp "$GWEB" "$WORK/lone/bin/gweb"
+out=$("$WORK/lone/bin/gweb" -C "$WORK/lone/app" run check 2>&1)
+check "$([ $? = 0 ] && has "$out" 'hk: checked' && echo ok)" "a copied gweb builds and runs the tool: $out"
 
 # 3. gen, build, --no-hooks.
 rm -f "$A/hook.log"
