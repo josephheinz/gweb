@@ -171,7 +171,7 @@ Rules:
 
 | Syntax | Does |
 |---|---|
-| `{expr}` | writes the value, HTML-escaped |
+| `{expr}` | writes the value, HTML-escaped (an enum of a view prints its `ENUM_LABELS` label or variant name, 1.4) |
 | `{#raw expr}` | writes it raw |
 | `{#if e}` `{#else if e}` `{#else}` `{/if}` | conditions |
 | `{#for x in e}`, `{#for x, i in e}`, `{/for}` | loops |
@@ -399,7 +399,7 @@ JSON codec, an admin form, a form parser and a registry that renders a view by a
 `goose-cms` page builder uses views for page types, sections, widgets and layouts; nothing here knows about a CMS.
 
 ```
-views/<group>/<Name>.goose    struct Props, optional fn validate, optional let LABEL / ICON / UI / RENAMED
+views/<group>/<Name>.goose    struct Props (root struct Props with text), optional fn validate, optional let LABEL / ICON / UI / RENAMED
 views/<group>/<Name>.html     template; props, req, ctx, doc and at in scope; may use @slot("x")
 ```
 
@@ -429,12 +429,37 @@ struct Props {
 fn validate(p: const Props&, errs: gweb::FieldErrors&) { gweb::check_length(errs, "title", p.title, 2, 60); }
 ```
 
-**Props fields.** `i64`, `bool`, `u8[..N]` (N a number), an enum with no payloads, a struct declared in the same file
-(items hold scalars, enums and foreign types only), a repeater (`T[>..<]`, `T[>..]` or `T[..N]` of such a struct) as the
-**last** field, and a foreign type `ns::T`. No `f64`. Anything else is a build error at the field's line. A field with no
-`= default` is required. `UI`, `LABEL`, `ICON`, `RENAMED` and `ENUM_LABELS` take string literals; each `field:` must name a real field
+**Props fields.** `i64`, `bool`, `u8[..N]` (N a number), `gweb::Text` and `gweb::LongText` (below), an enum with no
+payloads, a struct declared in the same file (items hold scalars, enums and foreign types only), a repeater (`T[>..<]`,
+`T[>..]` or `T[..N]` of such a struct) as the **last** field (anywhere, and several, in a `root struct Props`), and a
+foreign type `ns::T`. No `f64`. Anything else is a build error at the field's line. A field with no `= default` is
+required. `UI`, `LABEL`, `ICON`, `RENAMED` and `ENUM_LABELS` take literals; each `field:` must name a real field
 (`"group.field"` reaches into a struct). A missing label comes from the name (`cta_text` is "Cta text", `TwoColumn` is
 "Two column").
+
+**Text** (1.4, [Addendum 22](docs/DESIGN-ADDENDUM-22-TEXT.md)). `gweb::Text` and `gweb::LongText` are `u8[>..]`: as
+long as the text is, with no cap to guess and nothing stored inline. A Props with one is a `root struct Props` (a plain
+`struct Props` with one is a build error that says so); return or embed it by reference, never by value.
+
+| Type | Limit (characters) | Control |
+| --- | --- | --- |
+| `gweb::Text` | 128 | `<input>` (a `<textarea>` for `editor: "textarea"` or `"markdown"`) |
+| `gweb::LongText` | 65,536 | `<textarea>`, with `data-editor` when `editor` is set |
+
+`gweb::FieldUi { field: "body", max: 200000 }` changes the limit (`gen` warns `text-max` above 1 MiB, the request
+limit). The limit counts characters (code points) and is checked with a visible error, never by cutting. Text fields
+belong to Props itself: a fieldset or a repeater's item keeps `u8[..N]`.
+
+```goose
+root struct Props {
+    title: gweb::Text,                          // required, at most 128 characters
+    body: gweb::LongText = "",
+    links: Link[>..<] = [],                     // a repeater need not be last in a root struct
+    date: cms::Date = cms::Date { .. },
+}
+struct Link { label: u8[..80] = "", url: u8[..500] = "" }   // items keep u8[..N]
+let UI = [gweb::FieldUi { field: "body", editor: "markdown", max: 200000 }];
+```
 
 **Foreign types.** For `x: ns::T`, the generated code calls these, found by the type of `T`. Write them beside `T`:
 
@@ -443,6 +468,7 @@ fn gw_read(r: json::Reader&, v: T&, warn: i64&)
 fn gw_write(out: u8[>..]&, v: const T&)
 fn gw_field(out: u8[>..]&, name: const u8[:], v: const T&, label: const u8[:], help: const u8[:], editor: const u8[:], errs: const gweb::FieldErrors&)
 fn gw_parse(req: const http::Request&, name: const u8[:], v: T&, errs: gweb::FieldErrors&) -> bool
+fn gw_label(out: u8[>..]&, v: const T&)       // only when ITEM_LABEL names the field (1.4)
 ```
 
 **Slots.** `@slot("main")` and `@slot("left", "Hero Text")` (an allow list of view names) are holes in a view template.
@@ -451,9 +477,11 @@ Each compiles to `Z(out, req, ctx, doc, at, "left");`, where `Z` is a function y
 A slot inside `<title>`, `<textarea>`, `<script>` or `<style>` is a build error at its line (1.1): there it would
 be text, not a hole. The same holds for `@slot()` in `layout.html`.
 
-**Generated, in the view's namespace:** `fn read(json, p: Props&) -> i64` (the warning count), `fn write(out, p)`,
-`fn defaults(out)`, `fn form(out, json, errs, prefix)`, `fn form_req(out, req, json, errs, prefix)`, `fn parse(req, prefix, out, errs) -> bool` and
-`fn render<Z, D>(out, req, ctx, props, doc, at)`. Do not define those names.
+**Generated, in the view's namespace:** `fn read(json, p: Props&) -> i64` (the warning count),
+`fn read_errs(json, p: Props&, errs) -> i64` (1.4: as `read`, and names each field whose stored text was cut or is over
+its limit), `fn write(out, p)`, `fn defaults(out)`, `fn form(out, json, errs, prefix)`,
+`fn form_req(out, req, json, errs, prefix)`, `fn parse(req, prefix, out, errs) -> bool` and
+`fn render<Z, D>(out, req, ctx, props, doc, at)`. Do not define those names. Names that start with `gw_` are gweb's too.
 
 **Generated, in the module `views`** (`import views;`), for each group `g`:
 
@@ -464,6 +492,7 @@ g_render(out, req, ctx, name, props_json, doc, at, Z) -> bool      // false: no 
 g_defaults(name, out_json) -> bool     g_form(out, name, props_json, errs, prefix) -> bool
 g_form_req(out, req, name, props_json, errs, prefix) -> bool       // the rich form, below (1.1)
 g_parse(req, name, prefix, out_json, errs) -> bool                 // form to canonical JSON, then your validate
+g_read_errs(name, props_json, out_json, errs, prefix) -> bool      // stored JSON checked like a form (1.4), below
 ```
 
 `Z` goes last: `views::widgets_render(out, req, ctx, "Hero", json, doc, at, fill)`. The function that passes
@@ -477,17 +506,42 @@ recursive fn fill(out: u8[>..]&, req: const http::Request&, ctx: const gweb::Ctx
 
 **JSON.** Writing is canonical: keys in declaration order, enums by variant name, defaults written. Reading is lenient:
 an unknown key is ignored, a missing field takes its default, a value of the wrong type takes the default and counts
-one warning, text over its cap is cut on a character boundary (and counts), and a repeater keeps at most its limit (64
-for `T[>..<]`).
+one warning, `u8[..N]` text over its cap is cut on a character boundary (and counts), and a repeater keeps at most its
+limit (64 for `T[>..<]`). A `gweb::Text` or `LongText` is never cut: over its limit it is kept whole and counts one
+warning.
+
+**Read errors** (1.4). `read_errs` and `g_read_errs` name the field: "Stored text is 70,412 characters; the limit is
+65,536." or "Stored text was cut to 80 bytes." (`links.0.label` for an item). `g_read_errs` puts `prefix` in front,
+writes the canonical JSON to `out_json` (whole text included), runs `validate` when reading added no error, and returns
+true when no error was added; it validates JSON that did not come from a form, such as a merge of two editors' fields.
+`g_form_req` names the same problems on a GET, so an editor sees them before saving over them.
 
 **Forms.** `g_form` writes one control per field (`name="PREFIX" + field`; a struct adds `name.`, a repeater item
 `name.K.` and a hidden `name.n`). `g_parse` reads the same names, runs `validate`, and writes the canonical JSON.
 `gweb::form_enum` is the helper for enums. A view is limited to 32 fields and 8 slots.
 
-**Enum labels** (1.2). An enum field is a `<select>` of variant names. `let ENUM_LABELS = [gweb::EnumLabel { ty: "Gap",
-variant: "Wide", label: "Wide gap" }];` shows a label instead (a variant without one keeps its name), and
-`gweb::FieldUi { field: "gap", editor: "radio" }` draws a radio group (a `<fieldset>`). The posted value and the JSON
-keep the variant name.
+Limits are checked by `g_parse` before `validate`, with a message under the control: "Use at most 120 characters (this
+is 131)." for a `Text` (code points), "Use at most 80 bytes (this is 93)." for a `u8[..N]`. No `maxlength` is drawn,
+except on a `u8[..N]` in `g_form` (its 1.0 markup): a browser cuts a paste at `maxlength` with no message.
+`gweb::form_text_max(req, field, out, errs, required, max)` is the decoder for a growable target, and
+`gweb::check_length` counts characters.
+
+**Enums** (1.2). An enum field is a `<select>` of variant names. Its default is a variant of the enum, written with the
+enum's name: `gap: Gap = Gap.Wide`. `ENUM_LABELS` gives variants labels; each entry names the enum (`ty`), one variant
+and its label (1 to 64 bytes), as string literals:
+
+```goose
+enum Gap { Narrow, Wide }
+let ENUM_LABELS = [gweb::EnumLabel { ty: "Gap", variant: "Wide", label: "Wide gap" }];
+```
+
+The form shows the label (a variant without one keeps its name), and `gweb::FieldUi { field: "gap", editor: "radio" }`
+draws a radio group (a `<fieldset>`). The posted value and the JSON keep the variant name.
+
+In a template (1.4), `{props.gap}` prints the label, or the variant name when it has none: "Wide gap", "Narrow", never
+`Gap.Wide`. The raw variant name, for a class or a URL, is `{gweb::enum_name(props.gap)}`; `gweb::enum_label(v)` is the
+label as a value. Compare with `{#if props.gap == Gap.Wide}`. A view that declares its own `fn format(out, v: Gap)`
+keeps it.
 
 `validate` names fields plainly (`"title"`); `g_parse` puts the form prefix in front of each error, so the message
 shows under the control (`w.title`). After an error `g_parse` still writes the JSON it read (a field that did not
@@ -506,8 +560,10 @@ text the user typed, use `g_form_req`.
   the items, applies the action, drops the errors of the other fields, and returns false with no errors: draw the form
   again with `g_form_req` instead of saving. At the limit, Add is disabled, and a posted Add gives "Too many items."
   A hidden first button (`value=""`) makes Enter in a text field act as Save, not as the first item's button.
-- **Labels items.** `let ITEM_LABEL = "title";` names a text field of the item struct. The legend reads `#2: Eggs`.
-  A name that is not a text field of the item is a build error at the line.
+- **Labels items.** `let ITEM_LABEL = "title";` names a field of the item struct. The legend reads `#2: Eggs`. A text
+  field shows as is, an enum by its label (1.4), and a foreign field `ns::T` through `ns::gw_label(out, v)` (1.4), so a
+  reference to an item can show the item's name. With several repeaters, each whose item has the field shows it. A
+  name that no item has, or a field of another kind, is a build error at the line.
 
 `g_form` and `form` keep their 1.0 markup.
 
@@ -926,14 +982,15 @@ fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
 @gweb::field_error(props.errs, "email")</p>
 ```
 
-- Other checks: `gweb::check_length`, `check_range`, `check_one_of`, `add_error(errs, field, msg)`. The first
+- Other checks: `gweb::check_length` (its min and max count characters since 1.4), `check_range`, `check_one_of`, `add_error(errs, field, msg)`. The first
   error per field is kept. A route answers with `gweb::errors_json(res, errs)` (422).
 - `FieldErrors` holds 64 errors. When a form would go past that, the last slot becomes a form-level error
   (`gweb::error_for(errs, "")`, "Too many errors to show here") and `errs.dropped` is true, so the editor is told that
   some are missing.
 - Two helpers once shared a name: `gweb::form_int(req, "id")` reads one field as `i64, bool`, and `gweb::form_i64(req,
   field, out, errs, required)` is what a `*Form` decoder calls for an `i64` field. `form_text`, `form_bool`, `form_enum`
-  and `form_upload` are the other decoders; they all live in `gweb.forms.valid`.
+  and `form_upload` are the other decoders; they all live in `gweb.forms.valid`. `form_text_max(req, field, out, errs,
+  required, max)` (1.4) fills a `u8[>..]` and limits it to `max` characters.
 - `field_value` shows what was posted, so a bad number comes back as typed.
 - A 422 reply to a `gw-target` form is morphed in like a 200; without JavaScript it is a normal page.
   Keep the error `<span>` last in its parent (see the morph rule under Fragments).

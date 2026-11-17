@@ -18,7 +18,7 @@ The compiler type-checks them, so a wrong field name is a build error.
 
 | Syntax | Does |
 |---|---|
-| `{expr}` | writes the value, HTML-escaped |
+| `{expr}` | writes the value, HTML-escaped (an enum of a view prints its `ENUM_LABELS` label or variant name, 1.4) |
 | `{#raw expr}` | writes it raw |
 | `{#if e}` `{#else if e}` `{#else}` `{/if}` | conditions |
 | `{#for x in e}`, `{#for x, i in e}`, `{/for}` | loops |

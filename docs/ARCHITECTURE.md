@@ -417,6 +417,7 @@ readable `gwi.js`.
 | `test/image_test.goose` | `gweb::image_size` on built-in and fixture images, `image_size_file`. |
 | `test/slotcheck.sh` | `@slot()` inside `<title>`, `<textarea>`, `<script>` or `<style>` is a build error (1.1). |
 | `test/richforms.sh`, `test/richforms/` | The rich generated form (1.1): posted text after an error, help linked by `aria-describedby`, repeater buttons applied by `g_parse`, `ITEM_LABEL`, and their build errors. |
+| `test/text.sh`, `test/text/` | Text in views (1.4, Addendum 22): `gweb::Text` and `LongText` in a root struct, `FieldUi.max`, read errors, limits in forms, several repeaters, `ITEM_LABEL` of an enum or a foreign type, enums in templates, and their build errors. |
 | `test/pkgdeps.sh`, `test/pkgdeps/` | `package NAME SOURCE` (1.1) with a small C-free package: the root, check, test, lsp-gen and export, a gweb package that needs one, conflicts and errors, `GWEB_PKG_NAME`. |
 | `test/pgdeps.sh`, `test/pgdeps/` | goose-postgres as a declared package: the example app builds, and runs against a throwaway server. Skips without a checkout, libpq or `pg_ctl`. |
 | `test/markdown_test.goose` | `gweb::markdown`: the subset, hostile input, limits, speed. |

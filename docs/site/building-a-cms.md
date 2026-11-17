@@ -80,7 +80,7 @@ admin on one host.
 views/types/Article.goose    struct Props { title, theme, intro }, fn validate
 views/types/Article.html     ... @slot("main", "TwoColumn Text Quote Image") ...
 views/sections/TwoColumn.*   two slots: left and right
-views/widgets/Text.*         body: u8[..600], editor "markdown"
+views/widgets/Text.*         body: gweb::LongText, editor "markdown" (root struct Props)
 views/widgets/Image.*        media: cms::Media, a field type of the package's lib
 ```
 

@@ -1,8 +1,9 @@
-# Addendum 22: a text type for view Props (design only)
+# Addendum 22: a text type for view Props
 
 View Props hold text as `u8[..N]`: `title: u8[..300] = ""`, `body: u8[..60000] = ""`. The developer guesses `N`, every
 Props carries every cap inline (an Article is 61 KB, zeroed on each read), and long text is cut where nobody sees it.
-This addendum picks a replacement. Nothing here is built.
+This addendum picks a replacement. Migration step 1 is built (in the release after 1.3.0, so "1.3" below is 1.4); see
+"As built" at the end for where it differs.
 
 ## Where text is cut today
 
@@ -64,9 +65,9 @@ Two types replace the one `gweb::Text` above. Both are `u8[>..]`; everything els
 ```goose
 // views/types/Article.goose
 root struct Props {
-    title: gweb::Text,                          // required, at most 65,536 characters
+    title: gweb::Text,                          // required, at most 128 characters (120 with the UI below)
     summary: gweb::Text = "",
-    body: gweb::Text = "",
+    body: gweb::LongText = "",
     date: cms::Date = cms::Date { .. },
     links: Link[>..<],                          // a repeater no longer has to be last; several are allowed
 }
@@ -77,8 +78,8 @@ let UI = [gweb::FieldUi { field: "title", max: 120 }, gweb::FieldUi { field: "bo
 - `gweb::Text` is `u8[>..]`. A Props with one is a `root struct`. A plain `struct Props` with a `Text` field is a build
   error at its line: `a Props with gweb::Text is a root struct: write root struct Props`. gweb does not add `root`
   itself, because it changes what the app may do with Props (F4).
-- **The limit** is `FieldUi.max` (new, `i64 = 0`), in characters (code points), default 65,536 (the multipart text
-  default, `--max-upload-text`). Above `--max-body` (1 MiB) it cannot be reached; `gweb gen` warns (`text-max`).
+- **The limit** is `FieldUi.max` (new, `i64 = 0`), in characters (code points), default 128 for `Text` and 65,536 for
+  `LongText` (the multipart text default, `--max-upload-text`). Above `--max-body` (1 MiB) it cannot be reached; `gweb gen` warns (`text-max`).
 - **`Text` is a top-level Props field only.** In a fieldset struct (`badge: Badge`) that struct would have to be a root
   struct too, which cannot be a field (F4). Fieldsets and items keep `u8[..N]`.
 - Under a root struct, the repeater-last rule goes (F1 was its reason), and the 32-field cap stays.
@@ -99,8 +100,8 @@ function validates JSON that did not come from a form.
 
 ### Forms
 
-- `g_form_req` draws `Text` as `<input>`, or `<textarea>` when `editor` is `textarea` or `markdown`, or `max` is set
-  above 200. **No `maxlength`** on `Text`, and none on `u8[..N]` in `g_form_req` (a browser cut is the silent cut).
+- `g_form_req` draws `Text` as `<input>`, or `<textarea>` when `editor` is `textarea` or `markdown`; `LongText` as
+  `<textarea>`. **No `maxlength`** on `Text`, and none on `u8[..N]` in `g_form_req` (a browser cut is the silent cut).
   `g_form` keeps its 1.0 markup, as stability.md requires.
 - `g_parse` checks the limit before `validate`: `"Use at most 120 characters (this is 131)."`, counted in code points.
   For `u8[..N]` the message counts bytes and says so: `"Use at most 80 bytes (this is 93)."`. The rich form shows the
@@ -169,3 +170,26 @@ state struct is copied whole. Out of scope.
 - Whether `FieldUi.max` or a type parameter (`gweb::Text<120>`, if Goose grows one) is the long-term spelling.
 - Items with long text (an FAQ answer in a repeater) still need a cap. Option C for items only, or a child view per
   item (goose-cms sections already work that way), would lift it.
+
+## As built (2026-11-17)
+
+Step 1 of the migration, with the Decision above. Tests: `test/text.sh`. Where it differs from the design:
+
+- **Spelling.** Only `gweb::Text` and `gweb::LongText`. A bare `Text` after `import gweb` does not work: an import
+  brings no names into scope (Goose spec 11.1).
+- **`FieldUi.max`** applies to `Text` and `LongText` only; on any other field it is a build error. `text-max` warns
+  above 1,048,576 (the default `--max-body`), not above the flag a server runs with.
+- **`read`** counts a `Text` over its limit as one warning (the text is kept), so the count still means "the JSON
+  does not fit the view".
+- **`g_read_errs(name, json, out_json, errs, prefix) -> bool`.** It takes the form prefix, writes the canonical JSON,
+  and runs `validate` when reading added no error, so it is also goose-cms ask 6 (`g_validate`). The namespace's
+  `read_errs(json, p, errs) -> i64` names fields without a prefix and does not validate.
+- **Form markup.** `Text` and `LongText` have no `maxlength` in either form; a `u8[..N]` keeps it in `g_form` only. The
+  text control takes one `gweb::_TextUi` struct (`_vf_text_ui`) instead of twelve parameters, which also answers
+  goose-cms ask 8 for text. `_vf_text` stays for old generated code.
+- **Several repeaters.** `gw_act_Props` handles each; `ITEM_LABEL` labels each repeater whose item has the field. It
+  may also name an enum (its label) or a foreign field (`ns::gw_label(out, v)`), so a `cms::ItemRef` can label items.
+- **`FieldMeta.ty`** is `gweb::Text` or `gweb::LongText` for those fields, beside `chars`.
+- **Struct errors.** A struct of Props declared `root struct` is a build error (F4).
+- **Enums in templates** (goose-cms ask 2, with this release). Each view enum gets a `format` hook, so `{props.gap}`
+  prints its `ENUM_LABELS` label or variant name, and `gweb::enum_name(v)` / `gweb::enum_label(v)` overloads.
