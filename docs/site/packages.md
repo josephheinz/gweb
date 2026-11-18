@@ -26,6 +26,10 @@ The address may hold letters, digits and `. _ - + ~ / :`, and no `..` segment.
   catch-all, not `/`. The project must not have `app/prefix/`, and two mounts
   must not use the same prefix. Layouts and middleware above the mount wrap the
   package's pages.
+  A package route with `const MIDDLEWARE = false;` on a line of its own skips the
+  package's `middleware.goose` files (a health check, a TLS `ask` endpoint that must
+  answer with no session, on any host); the app's middleware above the mount still
+  runs. In an app route it skips the app's (1.6). A page cannot declare it.
   In the package's templates, views and components, `@asset("/x.js")` is the
   package's own `public/x.js`, served at `/prefix/x.js`, so the package need not
   spell its mount (1.6). Without such a file it is the URL as written, as in the app.

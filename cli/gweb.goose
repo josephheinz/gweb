@@ -54,6 +54,7 @@ struct Dir {
     frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
+    no_mw: bool = false,          // route.goose has const MIDDLEWARE = false; (1.6): its own source's middleware is skipped
     max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
     too_large: bool = false,      // page.goose or route.goose defines fn too_large( (gweb 1.5)
     error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false,   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
@@ -716,6 +717,39 @@ fn csrf_const(path: const u8[:], code: const u8[:], route: bool) -> bool {
         else { err(path, i + 1, "write const CSRF = false; to turn off this route's CSRF check (or const CSRF = true;)"); }
     }
     return found;
+}
+
+// True when route.goose has const MIDDLEWARE = false; (1.6). Reports a malformed declaration, or any in a page.goose.
+fn middleware_off(path: const u8[:], code: const u8[:], route: bool) -> bool {
+    var off = false;
+    for line, i in split(code, '\n') {
+        let t = trim_start(line);
+        if !starts_with(t, "const MIDDLEWARE") { continue; }
+        if t.len > 16 && (is_ident(t[16..17]) || (t[16] >= '0' && t[16] <= '9')) { continue; }
+        if !route { err(path, i + 1, "const MIDDLEWARE belongs in route.goose"); return false; }
+        if starts_with(t, "const MIDDLEWARE = false;") { off = true; }
+        else if !starts_with(t, "const MIDDLEWARE = true;") { err(path, i + 1, "write const MIDDLEWARE = false; to skip the middleware of this route's own app or package (or const MIDDLEWARE = true;)"); }
+    }
+    return off;
+}
+
+// The package whose app/ holds the folder root (the deepest), or -1 for the app's own app/.
+fn source_of(root: const u8[:]) -> i64 {
+    var best = -1;
+    for pk, i in pkgs {
+        if pk.dir.len == 0 { continue; }
+        var base: u8[>..] = [];
+        format(base, pk.dir, "/app");
+        if starts_with(root, base) && (root.len == base.len || root[base.len] == '/') && (best < 0 || pk.dir.len > pkgs[best].dir.len) { best = i; }
+    }
+    return best;
+}
+
+// A middleware.goose that runs for d: above it, unless d is a route with const MIDDLEWARE = false; and o comes from
+// the same source (the app, or the same package). The app's middleware above a package's mount still runs.
+fn middleware_runs(o: const Dir&, d: const Dir&) -> bool {
+    if !o.middleware || !is_ancestor(o.rel, d.rel) { return false; }
+    return !d.no_mw || source_of(o.root) != source_of(d.root);
 }
 
 // False when code has const SITEMAP = false; a malformed declaration is reported and leaves the page listed.
@@ -3435,7 +3469,7 @@ fn allow_list(d: const Dir&, out: u8[>..]&) {
 
 fn middleware_before(m: u8[>..]&, d: const Dir&, rq: const u8[:]) {
     for o in dirs {
-        if o.middleware && o.has_before && is_ancestor(o.rel, d.rel) {
+        if o.has_before && middleware_runs(o, d) {
             format(m, "    if !", o.mw_ns, "::before(", rq, ", ctx, res) { return; }\n");
         }
     }
@@ -3446,7 +3480,7 @@ fn middleware_after(m: u8[>..]&, d: const Dir&, rq: const u8[:]) {
     while k > 0 {
         k -= 1;
         let o = dirs[k];
-        if o.middleware && o.has_after && is_ancestor(o.rel, d.rel) {
+        if o.has_after && middleware_runs(o, d) {
             format(m, "    ", o.mw_ns, "::after(", rq, ", ctx, res);\n");
         }
     }
@@ -5085,6 +5119,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
                 d.too_large = defines(code, "too_large");
                 for k in 7 { if defines(code, METHODS[k]) { d.methods |= 1 << k; } }
                 d.csrf_const = csrf_const(src, code, true);
+                d.no_mw = middleware_off(src, code, true);
                 if d.methods == 0 { err(src, 0, "route.goose defines none of fn GET(, POST(, PUT(, PATCH(, DELETE(, HEAD(, OPTIONS("); }
             }
         }
@@ -5145,6 +5180,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
                     d.has_post_res = takes_res(code, "POST");
                     if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
                     csrf_const(src, code, false);
+                    middleware_off(src, code, false);
                     d.in_sitemap = sitemap_listed(src, code);
                     d.revalidate = revalidate_const(src, code);
                     d.static_paths = defines(code, "static_paths");

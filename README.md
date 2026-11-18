@@ -98,6 +98,7 @@ fn too_large(req: const http::Request&, ctx: gweb::Ctx&, limit: i64)            
 // app/**/middleware.goose
 fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> bool   // false: res is final
 fn after(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&)
+// route.goose: `const MIDDLEWARE = false;` skips its own app's or package's middleware (1.6)
 
 // app/state.goose: Msg and Reply are yours
 fn init()                                                                         // before the workers start

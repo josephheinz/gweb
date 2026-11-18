@@ -80,6 +80,20 @@ out=$("$GWEB" -C "$WORK/asset/app" gen 2>&1)
 case "$out" in *"error: no public file at /nope.css (looked for public/nope.css in this package, at /admin/nope.css, and in the app)"*) ok ;;
   *) bad "a missing package asset:"; echo "$out" ;; esac
 
+# const MIDDLEWARE = false; in a package route skips the package's middleware, not the app's (1.6), in route tests.
+fresh mw
+cp -R "$HERE/packages/mw/app/." "$WORK/mw/app/"
+cp -R "$HERE/packages/mw/pkg/." "$WORK/mw/pkg/"
+if out=$("$GWEB" -C "$WORK/mw/app" test 2>&1); then
+  case "$out" in *"ok t_mw::test_middleware_off"*) ok ;; *) bad "const MIDDLEWARE = false test:"; echo "$out" ;; esac
+else
+  bad "gweb test of const MIDDLEWARE = false"; echo "$out"
+fi
+printf 'const MIDDLEWARE = no;\n' >> "$WORK/mw/pkg/app/health/route.goose"
+out=$("$GWEB" -C "$WORK/mw/app" gen 2>&1)
+case "$out" in *"health/route.goose:9: error: write const MIDDLEWARE = false; to skip the middleware of this route's own app or package"*) ok ;;
+  *) bad "a malformed const MIDDLEWARE:"; echo "$out" ;; esac
+
 # 2. Build and serve, when there is a compiler.
 goose=${GOOSE:-}
 [ -z "$goose" ] && goose=$(command -v goose 2>/dev/null || true)

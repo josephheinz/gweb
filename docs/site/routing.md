@@ -8,7 +8,7 @@ A folder under `app/` is a URL segment. What is inside says what answers.
 | `page.goose` | `Props`, `fn load`, optional `fn POST` for that page |
 | `route.goose` | an API endpoint: `fn GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` |
 | `layout.html` | wraps every page at or below its folder |
-| `middleware.goose` | `fn before` and/or `fn after` for the subtree |
+| `middleware.goose` | `fn before` and/or `fn after` for the subtree; a route with `const MIDDLEWARE = false;` skips its own app's or package's (1.6) |
 | `app/not-found.html` | the 404 page |
 
 ```
