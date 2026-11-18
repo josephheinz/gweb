@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (v1.8.1)
+## v1.8.1
 
 From goose-cms round 7 (D9):
 
