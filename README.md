@@ -1087,8 +1087,8 @@ fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
   (`crashed` is true) and `Connection: close`. If that fails too, a fixed plain-text 500. The crashed
   worker's other keep-alive connections are closed; clients reconnect.
 - Without `error.html`: a small built-in page. The id is in the log line.
-- In `gweb dev` the page also carries the abort text and the source lines around each location, in the
-  overlay. Production never shows them. Build errors in the overlay get source lines too.
+- In `gweb dev` the page of a crash or a 5xx also carries the abort text and the source lines around each location, in the
+  overlay; a 4xx from `gweb::fail` (a 404, a 403) does not (1.6). Production never shows them. Build errors in the overlay get source lines too.
 - `gweb::done(ctx)` lets a page `fn POST` or `fn load` that took `res` write the whole reply itself
   (a `Retry-After`, a JSON body); no template renders. Without it the page renders and keeps the headers set on
   `res`: `http::set_header(res, "Cache-Control", "no-store")` in `load` marks a preview.

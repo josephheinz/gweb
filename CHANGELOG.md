@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Change: in `gweb dev` only a crash or a 5xx error page carries `#gw-dev-error`, so a `gweb::fail(ctx, 404, ...)` no longer covers the page with "server error (click to dismiss)". goose-cms ask 17. Test: `test/errors.sh`.
 - New: `const MIDDLEWARE = false;` in a `route.goose` skips the `before` and `after` of the middleware from the route's own source: a package's for a package route (a health check that needs no session, on any host), the app's for an app route. The app's middleware above a package's mount still runs, so a package cannot opt out of the app's. In a `page.goose`, or malformed, it is a build error at the line. goose-cms ask 14. Test: `test/packages.sh`.
 - Fix: `gweb::not_found(ctx)` or `gweb::fail` in `app/sitemap.goose`'s `entries` or `robots` answers without the sitemap's `Cache-Control: public, max-age=3600`, now documented. Was: the 404 page carried it, so a proxy could keep it an hour. goose-cms ask 12. Test: `test/sitemap.sh`.
 - New: `gweb::stream_file(s, root, rel) -> i64` writes a file into a stream in 256 KiB windows and `gweb::file_size(root, rel) -> i64` reads its size, with `send_file`'s path rules, so a download built while it is sent (a backup tar of a snapshot and its media) needs no temp file. goose-cms ask 13. Test: `test/cmsready.sh`.

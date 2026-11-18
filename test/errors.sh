@@ -219,6 +219,8 @@ sys.exit(0 if isinstance(d, str) and d.startswith("GET /crash") and len(d) <= 40
   check "$(body_has dn 'id="nested-error"' && body_has dn 'id="gw-dev-error"' && echo ok)" "dev /nested: the nested error.html and the detail"
   req df GET /fail
   check "$([ "$(status df)" = 503 ] && body_has df 'id="gw-dev-error"' && body_has df 'Down for maintenance.' && body_has df 'GET /fail' && echo ok)" "dev /fail: detail has the request and the message"
+  req dg GET /gone
+  check "$([ "$(status dg)" = 404 ] && body_has dg 'That page is in the trash.' && ! body_has dg 'id="gw-dev-error"' && body_has dg '__gweb/id' && echo ok)" "dev /gone: a 4xx from gweb::fail has no overlay detail (1.6)"
   req dj GET /api/boom
   check "$([ "$(status dj)" = 500 ] && ! body_has dj 'gw-dev-error' && echo ok)" "dev /api/boom: JSON has no detail script"
   req db GET /brokenerr

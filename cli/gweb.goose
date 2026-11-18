@@ -3995,7 +3995,8 @@ fn gen_error_reply(m: u8[>..]&) {
         m.append(if csrf { " }\n        },\n" } else { "\n        },\n" });
     }
     m.append("        _ => gweb::_builtin_page(res.body, info),\n    }\n");
-    m.append("    if gweb::_dev_mode() { gweb::_dev_error_script(res.body, info); }\n}\n");
+    // The overlay is for crashes and 5xx (1.6): a 404 or 403 from gweb::fail is an answer, not a bug.
+    m.append("    if gweb::_dev_mode() && (info.crashed || info.status >= 500) { gweb::_dev_error_script(res.body, info); }\n}\n");
 }
 
 // The generated main's export mode: each page is rendered in process through dispatch with a synthetic request.
