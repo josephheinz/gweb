@@ -33,3 +33,16 @@ fn count_of(text: const u8[:], needle: const u8[:]) -> i64 {
     }
     return n;
 }
+
+fn test_redirect_body(t: gweb::Tester&) {
+    let bare = site::get(t, "/api/moved");
+    gweb::expect_status(t, bare, 301);
+    gweb::expect_header(t, bare, "Location", "/api/hello");
+    gweb::expect_eq(t, bare.body, "", "no body");
+    gweb::expect_no_header(t, bare, "Content-Type");
+    let with = site::get(t, "/api/moved?body=1");
+    gweb::expect_status(t, with, 301);
+    gweb::expect_header(t, with, "Location", "/api/hello");
+    gweb::expect_header(t, with, "Content-Type", "text/html; charset=utf-8");
+    gweb::expect_contains(t, with.body, "<a href=\"/api/hello\">");
+}

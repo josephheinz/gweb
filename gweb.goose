@@ -505,6 +505,7 @@ fn unprocessable(ctx: Ctx&) { ctx.status = 422; }
 
 let MAX_REDIRECT = 8192;
 
+// The reply keeps a body and Content-Type the handler set on `res` before calling this; set none, it has neither (1.8).
 // A URL over MAX_REDIRECT bytes, or one holding CR, LF or NUL, is refused: the outcome becomes a 500 error (the
 // generated finish logs it with an id), so a signed URL is never sent cut.
 fn redirect(ctx: Ctx&, to: const u8[:], status: i64 = 302) {
@@ -527,8 +528,9 @@ fn redirect(ctx: Ctx&, to: const u8[:], status: i64 = 302) {
 // A Location line that does not fit beside res.headers makes a bare 500, as for cookies.
 fn _apply_redirect(ctx: const Ctx&, res: http::Response&) {
     res.status = http::status_from_code(ctx.redirect_status);
-    res.content_type.clear();
-    res.body.clear();
+    // A body the handler wrote (the link for a browser that does not follow, a JSON note) is kept with its
+    // Content-Type; with none the reply has neither (1.8, was: both cleared).
+    if res.body.len == 0 { res.content_type.clear(); }
     if !http::add_header(res, "Location", ctx.location) {
         print("gweb: redirect: a Location of ", ctx.location.len, " bytes does not fit in the reply's headers");
         res.headers.clear();

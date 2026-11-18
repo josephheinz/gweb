@@ -58,6 +58,20 @@ fn _wants_html(req: const http::Request&) -> bool {
     return h >= 0 && (j < 0 || h < j);
 }
 
+// A form post (urlencoded or multipart) that does not ask for JSON or send fetch's headers is a browser submitting a
+// form, whatever its Accept says: curl's `*/*`, or none (1.8). Used for a body over its limit, where the reply is
+// the page the person reads, not what a script parses.
+fn _form_wants_html(req: const http::Request&) -> bool {
+    let f, frag = http::header(req, "gw-fragment");
+    let x, xhr = http::header(req, "x-requested-with");
+    if frag || xhr { return false; }
+    let accept, has = http::header(req, "accept");
+    if has && find(accept, "application/json") >= 0 { return false; }
+    let ct, has_ct = http::header(req, "content-type");
+    if !has_ct { return false; }
+    return starts_with(ct, "application/x-www-form-urlencoded") || starts_with(ct, "multipart/form-data");
+}
+
 // The default answer to a body over its limit (ctx.too_large): a 413 whose message names the limit.
 fn _too_large_fail(req: const http::Request&, ctx: Ctx&) {
     var m: u8[>..] = [];
