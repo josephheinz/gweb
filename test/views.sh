@@ -148,5 +148,13 @@ else
   bad "gweb build of the variable Msg site"; show "$out"
 fi
 
+# 7. A view with an empty `struct Props { }` (1.6): a widget and a layout.
+cp -R "$HERE/views/empty" "$WORK/em"
+if out=$("$GWEB" -C "$WORK/em" test 2>&1); then
+  case "$out" in *"ok t_empty::test_empty_props"*) ok ;; *) bad "empty Props test did not run:"; show "$out" ;; esac
+else
+  bad "gweb test of views with an empty Props failed:"; show "$out"
+fi
+
 echo "views.sh: $pass of $((pass + fail)) checks passed"
 [ "$fail" -eq 0 ]

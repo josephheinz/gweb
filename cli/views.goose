@@ -832,7 +832,10 @@ fn gen_view(v: View&) -> bool {
     var extra: u8[>..] = [];
     extra.append("\n// gweb: view codec, form and parser (generated)\n");
     gen_enum_helpers(extra, code, v.ns);
+    // Props first, so that a view with an empty `struct Props { }` still gets its codec (1.6).
     var seen: u8[..64][>..<] = [];
+    var props: u8[..64] = "Props";
+    seen.push(props);
     for f in fields {
         var done = false;
         for s in seen { if s == f.owner { done = true; } }
@@ -840,11 +843,13 @@ fn gen_view(v: View&) -> bool {
         var o: u8[..64] = "";
         o.append(f.owner);
         seen.push(o);
-        gen_read_struct(extra, code, f.owner);
-        gen_write_struct(extra, f.owner);
-        gen_form_struct(extra, f.owner);
-        gen_parse_struct(extra, f.owner);
-        if f.owner == "Props" { gen_act_struct(extra, f.owner); }
+    }
+    for o in seen {
+        gen_read_struct(extra, code, o);
+        gen_write_struct(extra, o);
+        gen_form_struct(extra, o);
+        gen_parse_struct(extra, o);
+        if o == "Props" { gen_act_struct(extra, o); }
     }
     extra.append("""
 fn read(text: const u8[:], p: Props&) -> i64 {

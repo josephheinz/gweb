@@ -438,7 +438,7 @@ fn validate(p: const Props&, errs: gweb::FieldErrors&) { gweb::check_length(errs
 payloads, a struct declared in the same file (items hold scalars, enums and foreign types only), a repeater (`T[>..<]`,
 `T[>..]` or `T[..N]` of such a struct) as the **last** field (anywhere, and several, in a `root struct Props`), and a
 foreign type `ns::T`. No `f64`. Anything else is a build error at the field's line. A field with no `= default` is
-required. `UI`, `LABEL`, `ICON`, `RENAMED` and `ENUM_LABELS` take literals; each `field:` must name a real field
+required. A `struct Props { }` with no fields is a view too (1.6): its JSON is `{}` and its form is empty. `UI`, `LABEL`, `ICON`, `RENAMED` and `ENUM_LABELS` take literals; each `field:` must name a real field
 (`"group.field"` reaches into a struct). A missing label comes from the name (`cta_text` is "Cta text", `TwoColumn` is
 "Two column").
 

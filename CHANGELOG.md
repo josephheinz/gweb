@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix: a view with an empty `struct Props { }` builds: its `read`, `write`, `defaults`, `form` and `parse` are generated (they called a `gw_read_Props` that was not). goose-cms ask 1. Test: `test/views.sh`.
+
 ## v1.5.0
 
 - New: a template compiler error is `file:line:col`, with an excerpt of about 80 characters around the column and a caret, not the whole generated-from line. Test: `test/devbuild.sh`.
