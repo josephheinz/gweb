@@ -453,6 +453,29 @@ fn field_msg(msg: const u8[:], gen: const u8[:], ln: i64, gcol: i64, token: cons
     return out;
 }
 
+// goose's `no field access on a value of type u8[..40]` for `x.length`, `.size` or `.count` on an array or text
+// type: the message with a hint (1.6); "" otherwise. token is the text the caret marks.
+fn len_hint(msg: const u8[:], token: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let pre = "no field access on a value of type ";
+    if !starts_with(msg, pre) || find(msg, "(arrays and text have .len)") >= 0 { return out; }
+    let ty = trim(msg[pre.len..]);
+    if find(ty, "[") < 0 || !ends_with(ty, "]") { return out; }
+    let t = trim(token);
+    if !(ends_with(t, ".length") || ends_with(t, ".size") || ends_with(t, ".count")) { return out; }
+    format(out, msg, " (arrays and text have .len)");
+    return out;
+}
+
+// The text a caret line marks in the excerpt line above it.
+fn caret_token(shown: const u8[:], caret: const u8[:]) -> const u8[:] {
+    let c0 = find(caret, "^");
+    if c0 < 0 { return ""; }
+    var span = 0;
+    while c0 + span < caret.len && (caret[c0 + span] == '^' || caret[c0 + span] == '~') { span += 1; }
+    return shown[min(c0, shown.len)..min(c0 + span, shown.len)];
+}
+
 // A short excerpt of line around col (0-based bytes) and a caret under span bytes of it.
 fn caret_excerpt(out: u8[>..]&, line: const u8[:], col: i64, span: i64) {
     let room = 40;
@@ -532,6 +555,7 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
             }
             var better: u8[>..] = [];
             if gcol >= 0 { better.append(field_msg(msg, gen, ln, gcol, token)); }
+            if better.len == 0 { better.append(len_hint(msg, token)); }
             let text = if better.len > 0 { better[..] } else { msg[..] };
             if !have || real == shown {
                 if better.len > 0 { format(out, path, ":", ln, ": ", sev, ": ", text, "\n"); } else { format(out, line, "\n"); }
@@ -575,6 +599,11 @@ fn print_compiler(text: const u8[:]) {
     var out: u8[>..] = [];
     var head: u8[>..] = [];
     var detail: u8[>..] = [];
+    var hpath: u8[>..] = [];
+    var hmsg: u8[>..] = [];
+    var hln = 0;
+    var herr = true;
+    var prev: u8[>..] = [];
     for line in split(text, '\n') {
         if line.len == 0 { continue; }
         var path: u8[>..] = [];
@@ -584,12 +613,20 @@ fn print_compiler(text: const u8[:]) {
         if split_diag(line, path, ln, is_err, msg) {
             flush_diag(out, head, detail);
             json_head(head, if is_err { "error" } else { "warning" }, path, ln, "", msg);
+            hpath.clear(); hpath.append(path); hmsg.clear(); hmsg.append(msg); hln = ln; herr = is_err;
         } else if head.len == 0 {
             json_head(head, "error", "", 0, "", line);
         } else {
+            // A raw caret under the excerpt: the .len hint, as the condensed text has it.
+            if is_caret_line(line) {
+                let better = len_hint(hmsg, caret_token(prev, line));
+                if better.len > 0 { head.clear(); json_head(head, if herr { "error" } else { "warning" }, hpath, hln, "", better); }
+            }
             if detail.len > 0 { detail.push('\n'); }
             detail.append(line);
         }
+        prev.clear();
+        prev.append(line);
     }
     flush_diag(out, head, detail);
     write_stderr(out);

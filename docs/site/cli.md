@@ -83,7 +83,8 @@ compile when the C is unchanged; and none when only `public/` changed, because t
 
 Compiler errors show once each. A template error gives `file:line:col` and a short excerpt of the line with a caret; a
 missing field names whose struct it is and its fields (`views/items/TeamMember: Props has no field "rol" (it has:
-title, role)`). `--raw-errors` (or `GWEB_RAW_ERRORS=1`) on `build`, `start`, `export`, `dev`, `check` or `test` shows
+title, role)`); `.length`, `.size` or `.count` on an array or text adds `(arrays and text have .len)` (1.6, in
+`--diagnostics json` too). `--raw-errors` (or `GWEB_RAW_ERRORS=1`) on `build`, `start`, `export`, `dev`, `check` or `test` shows
 goose's whole output instead.
 
 ## `gweb update`

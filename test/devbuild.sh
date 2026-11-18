@@ -92,6 +92,24 @@ out=$("$GWEB" -C "$WORK/views" test 2>&1)
 check "$(printf '%s\n' "$out" | grep -qxF 'views/widgets/Text.html:1:20: error: views/widgets/Text: Props has no field "bdy" (it has: body)' && echo ok)" \
   "the view's own props too"
 [ "$fail" = 0 ] || show "$out"
+# .length, .size or .count on an array or text: the hint (1.6), in a template, a .goose file and JSON diagnostics.
+fresh len
+mkdir -p "$WORK/len/app/len"
+printf 'import std;\nimport net.http;\nimport gweb;\nstruct Props { title: u8[..40] }\nfn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props { return Props { title: "x" }; }\n' > "$WORK/len/app/len/page.goose"
+printf '<p>{props.title.length}</p>\n' > "$WORK/len/app/len/page.html"
+out=$("$GWEB" -C "$WORK/len" build 2>&1)
+check "$(printf '%s\n' "$out" | grep -qxF 'app/len/page.html:1:5: error: no field access on a value of type u8[..40] (arrays and text have .len)' && echo ok)" \
+  "a template's .length on text: the .len hint"
+[ "$fail" = 0 ] || show "$out"
+out=$("$GWEB" -C "$WORK/len" build --diagnostics json 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF '"message":"no field access on a value of type u8[..40] (arrays and text have .len)"' && echo ok)" "the hint in JSON diagnostics"
+out=$("$GWEB" -C "$WORK/len" build --diagnostics json --raw-errors 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF '(arrays and text have .len)"' && echo ok)" "the hint in JSON diagnostics with --raw-errors"
+printf '<p>{props.title.len}</p>\n' > "$WORK/len/app/len/page.html"
+printf 'fn gw_count(xs: const i64[:]) -> i64 { return xs.count; }\n' >> "$WORK/len/app/len/page.goose"
+out=$("$GWEB" -C "$WORK/len" build 2>&1)
+check "$(printf '%s\n' "$out" | grep -qxF 'app/len/page.goose:6: error: no field access on a value of type const i64[:] (arrays and text have .len)' && echo ok)" "a .goose file's .count on an array: the hint"
+[ "$fail" = 0 ] || show "$out"
 # A .goose error: goose's excerpt is the source line, so its caret stays.
 fresh goose
 sed 's/n: 1,/n: 1 + "x",/' "$HERE/devbuild/site/app/page.goose" > "$WORK/goose/app/page.goose"
