@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.5.0
 
 - New: a template compiler error is `file:line:col`, with an excerpt of about 80 characters around the column and a caret, not the whole generated-from line. Test: `test/devbuild.sh`.
 - New: goose's `struct Props has no field x` names whose Props it is and lists its fields: `views/items/TeamMember: Props has no field "rol" (it has: title, role, photo, bio)`, or `app/page.goose: ...` for a page's. Test: `test/devbuild.sh`.

@@ -9,12 +9,12 @@ Short guides are in [docs/site/](docs/site/).
 ## Install
 
 ```
-git clone --branch v1.4.0 --depth 1 https://github.com/josephheinz/gweb
+git clone --branch v1.5.0 --depth 1 https://github.com/josephheinz/gweb
 cd gweb && goose build -o gweb cli/gweb.goose
 ln -s "$PWD/gweb" ~/bin/gweb           # or: cp gweb ~/bin/
 ```
 
-`gweb update` moves the checkout to the latest release (or `gweb update v1.4.0`), with `goose-net` and
+`gweb update` moves the checkout to the latest release (or `gweb update v1.5.0`), with `goose-net` and
 `goose-sqlite` beside it, rebuilds `gweb` and links it beside `goose` on `PATH` (`~/.local/bin`, or
 `$GWEB_BIN_DIR`). It refuses a checkout with changes, and changes nothing when the network or a tag is missing.
 A checkout past the release (a branch with newer commits) is left as it is and only rebuilt.
@@ -37,9 +37,9 @@ To run this package's tests from a clone, clone goose-net beside it
 ## Use the libraries without gweb
 
 ```goose
-import gweb from "josephheinz/gweb@v1.4.0";
-import net from "josephheinz/goose-net@v1.4.0";           // gweb needs this line too
-import sqlite from "josephheinz/goose-sqlite@v1.4.0";     // only if you use SQLite
+import gweb from "josephheinz/gweb@v1.5.0";
+import net from "josephheinz/goose-net@v1.5.0";           // gweb needs this line too
+import sqlite from "josephheinz/goose-sqlite@v1.5.0";     // only if you use SQLite
 ```
 
 The design is in [DESIGN.md](docs/DESIGN.md). [DESIGN-ADDENDUM-1.md](docs/DESIGN-ADDENDUM-1.md)
