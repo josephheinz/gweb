@@ -1541,7 +1541,8 @@ fn tool_root(src: const u8[:], dir: const u8[:]) -> u8[>..] {
         if q2 < q1 { out.append(line); continue; }
         let source = t[q1..q2];
         var to: u8[>..] = [];
-        if name == "gweb" { to.append(pkg_source(0)); }
+        if name == "views" { to.append(tool_views_dir()); }
+        else if name == "gweb" { to.append(pkg_source(0)); }
         else if name == "net" { to.append(pkg_source(1)); }
         else if name == "sqlite" { to.append(pkg_source(2)); }
         else {
@@ -1558,6 +1559,27 @@ fn tool_root(src: const u8[:], dir: const u8[:]) -> u8[>..] {
         out.append(t[q2..]);
     }
     return out;
+}
+
+// Where a tool that writes `import views from "...";` gets the app's generated views (1.6): .gweb.tools/gen, written
+// by gen before the tool builds. views is a reserved package name, so the line means nothing else.
+let TOOL_GEN = ".gweb.tools/gen";
+
+fn tool_views_dir() -> u8[>..] {
+    var cwd: u8[>..] = [];
+    c_cwd(cwd);
+    var out: u8[>..] = [];
+    format(out, cwd, "/", TOOL_GEN);
+    return out;
+}
+
+// True when a tool's root imports the app's views: a line `import views from "...";`.
+fn tool_uses_views(src: const u8[:]) -> bool {
+    for line in split(src, '\n') {
+        let t = trim(line);
+        if starts_with(t, "import views from \"") { return true; }
+    }
+    return false;
 }
 
 fn mkdir_p(dir: const u8[:]) {
@@ -1615,18 +1637,31 @@ fn ensure_tool(t: const Tool&) -> bool {
     var src: u8[>..] = [];
     if !read_file(orig, src) { var m: u8[>..] = []; format(m, "tool ", t.name, ": cannot read ", orig); err(t.path, t.line, m); return false; }
     let fdir = orig[..rfind(orig, "/")];
-    let root = if t.pkg.len > 0 { tool_root(src, fdir) } else { copy(src) };
+    // A tool that imports the app's views builds from a tree too, its root pointed at a fresh gen of the app.
+    let with_views = tool_uses_views(src);
+    let tree_build = t.pkg.len > 0 || with_views;
+    let root = if tree_build { tool_root(src, fdir) } else { copy(src) };
     var count = 0;
     let st = if t.git { 0 } else { c_src_stamp(if t.pkg.len > 0 { t.dir[..] } else { fdir }, count) };
     var key: u8[>..] = [];
     format(key, trim(EMBEDDED_VERSION), "\n", orig, "\n", st, " ", count, "\n", root);
+    if with_views { format(key, "\nviews ", views_stamp()); }
     var have: u8[>..] = [];
     if file_exists(bin) && read_file(keyf, have) && have == key { return true; }
     var bdir: u8[>..] = [];
     format(bdir, TOOLS_DIR, "/bin");
     mkdir_p(bdir);
+    if with_views {
+        let before = errors;
+        if !gen(false, TOOL_GEN) || errors > before {
+            var m: u8[>..] = [];
+            format(m, "tool ", t.name, ": the app's views did not generate");
+            err(t.path, t.line, m);
+            return false;
+        }
+    }
     var main_path: u8[>..] = [];
-    if t.pkg.len > 0 {
+    if tree_build {
         var tree: u8[>..] = [];
         format(tree, cwd, "/", TOOLS_DIR, "/src/", t.name);
         tool_tree(t.dir, t.file, tree, root);
@@ -3855,9 +3890,9 @@ fn gen_static(m: u8[>..]&) {
             if read(src, data) { write(dst, data); }
             format(m, "let S", i, " = embed_file(\"pkg_static_", i, "\");\n");
         } else {
-            format(m, "let S", i, " = embed_file(\"../"); lit(m, src); m.append("\");\n");
+            format(m, "let S", i, " = embed_file(\"", up_of(gen_root)); lit(m, src); m.append("\");\n");
         }
-        if s.gz >= 0 { format(m, "let S", s.gz, " = embed_file(\"../"); lit(m, gen_root); format(m, "/_gz/", i, ".gz\");\n"); }
+        if s.gz >= 0 { format(m, "let S", s.gz, " = embed_file(\"", up_of(gen_root)); lit(m, gen_root); format(m, "/_gz/", i, ".gz\");\n"); }
     }
     m.append("fn static_bytes(i: i64) -> const u8[:] {\n");
     for s, i in statics {
@@ -5086,6 +5121,13 @@ fn gen_components(dev: bool) {
     }
 }
 
+// The way from a generated root (relative to the project, as .gweb or .gweb.tools/gen) back to the project: "../" per folder.
+fn up_of(root: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    for seg in split(root, '/') { if seg.len > 0 && seg != "." { out.append("../"); } }
+    return out;
+}
+
 fn gen(dev: bool, root: const u8[:]) -> bool {
     dev_gen = dev && root == BUILD_DIR;
     has_locales = false;
@@ -5138,7 +5180,9 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     if is_dir("lib") {
         var lib_link: u8[>..] = [];
         format(lib_link, root, "/lib");
-        c_symlink("../lib", lib_link);
+        var lib_to: u8[>..] = [];
+        format(lib_to, up_of(root), "lib");
+        c_symlink(lib_to, lib_link);
     }
     // A package's lib/ is linked at <root>/NAME, so its code writes import NAME.module;
     for pk in pkgs {
@@ -6205,6 +6249,22 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
         shq(cmd, a);
     }
     return cmd;
+}
+
+// The inputs of the generated views a tool imports: the app's and path packages' code folders, without hook paths.
+fn views_stamp() -> i64 {
+    var count = 0;
+    var newest = 0;
+    for dir in ["app", "lib", "components", "locales", "stores", "views"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    for pk in pkgs {
+        if pk.git { continue; }
+        for sub in ["app", "lib", "components", "stores", "views"] {
+            var dir: u8[>..] = [];
+            format(dir, pk.dir, "/", sub);
+            newest = max(newest, c_tree_stamp(dir, count));
+        }
+    }
+    return newest * 31 + count;
 }
 
 // What gweb dev watches besides public/.

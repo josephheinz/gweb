@@ -98,6 +98,14 @@ hook views cms check
   first, into `.gweb.tools/bin/NAME`, and again when its sources change. A package's tool builds from a tree of links
   in `.gweb.tools/src/NAME/`, so the package folder is not written to, and its root's `import X from "..."` lines get
   the app's sources: `gweb`, `net`, `sqlite`, and the `package` lines. An app's tool builds as written.
+  So a tool may use a Goose package that needs gweb, such as goose-blob: its root declares `import gweb from "...";`,
+  `import net from "...";` and `import blob from "...";`, and each gets the app's source.
+- **The app's views in a tool** (1.6). A tool whose root has `import views from "...";` (any source: `views` is a
+  reserved package name) builds against the app's generated views, so a CLI reads and writes stored Props with the
+  same `views::g_*` and `v_<group>_<Name>::read` / `write` as the server, instead of its own readers. gweb generates
+  the app into `.gweb.tools/gen/` first, and rebuilds the tool when the app's or a path package's `app/`, `lib/`,
+  `components/`, `stores/` or `views/` change. The tool's other `import X from "..."` lines get the app's sources,
+  as for a package's tool. Code that needs the running server (`state::ask`, routes) is not there.
 - **`run NAME COMMAND`**: `gweb run NAME a b` runs `COMMAND a b` with `/bin/sh` and exits with its status.
   `gweb run` lists them. The app's command wins over a package's; two packages with one name need the app to choose.
 - **`hook PATHS COMMAND`**: `gweb build`, `start`, `export` and `dev` run it before generating. `PATHS` are the app's

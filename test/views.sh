@@ -156,5 +156,30 @@ else
   bad "gweb test of views with an empty Props failed:"; show "$out"
 fi
 
+# 8. A tool that imports the app's views (1.6): an app tool, rebuilt when a view changes, and a package's tool.
+cp -R "$HERE/views/site" "$WORK/tl"
+mkdir -p "$WORK/tl/cli"
+cp "$HERE/views/tool/vt.goose" "$WORK/tl/cli/vt.goose"
+printf 'tool vt cli/vt.goose\nrun vt vt\n' > "$WORK/tl/gweb.packages"
+out=$("$GWEB" -C "$WORK/tl" run vt Text 2>&1)
+case "$out" in *'vt true 2 {"body":""}'*) ok ;; *) bad "an app tool reads the app's views:"; show "$out" ;; esac
+sleep 1
+printf 'import std;\nimport gweb;\nstruct Props { body: u8[..2000] = "", n: i64 = 4 }\n' > "$WORK/tl/views/widgets/Text.goose"
+out=$("$GWEB" -C "$WORK/tl" run vt Text 2>&1)
+case "$out" in *"building tool vt"*'vt true 2 {"body":"","n":4}'*) ok ;; *) bad "the tool is rebuilt with the changed view:"; show "$out" ;; esac
+if out=$("$GWEB" -C "$WORK/tl" build 2>&1); then ok; else bad "gweb build after the tool's gen"; show "$out"; fi
+rm -rf "$WORK/tp"
+mkdir -p "$WORK/tp"
+cp -R "$HERE/views/site" "$WORK/tp/app"
+cp -R "$HERE/views/pkg" "$WORK/tp/pkg"
+rm "$WORK/tp/app/tests/views.goose"
+mkdir -p "$WORK/tp/pkg/cli"
+cp "$HERE/views/tool/vt.goose" "$WORK/tp/pkg/cli/vt.goose"
+printf 'tool pt cli/vt.goose\nrun pt pt Banner\n' >> "$WORK/tp/pkg/gweb.package"
+sed -i.bak 's/^gweb 0.4$/gweb 1.3/' "$WORK/tp/pkg/gweb.package"
+printf '../pkg\n' > "$WORK/tp/app/gweb.packages"
+out=$("$GWEB" -C "$WORK/tp/app" run pt 2>&1)
+case "$out" in *'vt true 3 {"text":"banner"}'*) ok ;; *) bad "a package tool reads the app's views, its own included:"; show "$out" ;; esac
+
 echo "views.sh: $pass of $((pass + fail)) checks passed"
 [ "$fail" -eq 0 ]

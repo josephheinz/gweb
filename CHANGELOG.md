@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New: a `tool` whose root writes `import views from "...";` builds against the app's generated views (`views::g_*`, `v_<group>_<Name>::read`), from a gen into `.gweb.tools/gen/`, and is rebuilt when the app's code or views change, so a package CLI needs no copy of the view readers. Test: `test/views.sh`.
+- Docs: a tool may use goose-blob (or any package that needs gweb) by declaring `gweb`, `net` and the package in its root.
 - New: `gweb::public_file(url, out) -> bool` reads the bytes of a `public/` file (the app's, or a package's at its mount) from server code: the embedded bytes, or the file on disk in a dev build. Test: `test/routes.sh`.
 - New: goose's `no field access on a value of type u8[..40]` (or any array type) at `.length`, `.size` or `.count` ends with `(arrays and text have .len)`, in condensed errors and `--diagnostics json` (with `--raw-errors` too). Test: `test/devbuild.sh`.
 - Change: in `gweb dev` only a crash or a 5xx error page carries `#gw-dev-error`, so a `gweb::fail(ctx, 404, ...)` no longer covers the page with "server error (click to dismiss)". goose-cms ask 17. Test: `test/errors.sh`.
