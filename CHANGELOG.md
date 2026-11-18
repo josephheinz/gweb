@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New: in a mounted package's templates, views and components, `@asset("/x.js")` is the package's own `public/x.js` at its mount (`/admin/x.HASH.js`), so a package need not spell where it is mounted. Without such a file the URL is the one written, so `@asset("/admin/x.js")` keeps working. goose-cms ask 4. Test: `test/packages.sh`.
 - Fix: a package's `app/` or `lib/` that mentions `gweb::subscribe(` or `gweb::websocket(` starts the push hub, as the app's do; its event stream answered 503. goose-cms ask 3. Test: `test/packages.sh`.
 - Fix: a view with an empty `struct Props { }` builds: its `read`, `write`, `defaults`, `form` and `parse` are generated (they called a `gw_read_Props` that was not). goose-cms ask 1. Test: `test/views.sh`.
 

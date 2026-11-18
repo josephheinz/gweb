@@ -26,6 +26,9 @@ The address may hold letters, digits and `. _ - + ~ / :`, and no `..` segment.
   catch-all, not `/`. The project must not have `app/prefix/`, and two mounts
   must not use the same prefix. Layouts and middleware above the mount wrap the
   package's pages.
+  In the package's templates, views and components, `@asset("/x.js")` is the
+  package's own `public/x.js`, served at `/prefix/x.js`, so the package need not
+  spell its mount (1.6). Without such a file it is the URL as written, as in the app.
 - **Nested mounts.** A package may be mounted inside another's mount:
   `./admin/shop at /admin/shop` beside `../cms at /admin`. The outer package
   must not have the folder `app/shop`. The inner pages get the outer layouts and

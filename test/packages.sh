@@ -66,6 +66,20 @@ else
   bad "gweb gen with a package that subscribes"; echo "$out"
 fi
 
+# In a package, @asset("/x.css") is the package's public/x.css at its mount (1.6); the mount spelled out still works.
+fresh asset
+printf '<link href="@asset("/x.css")"><link href="@asset("/admin/x.css")">\n' >> "$WORK/asset/pkg/app/page.html"
+if out=$("$GWEB" -C "$WORK/asset/app" gen 2>&1); then
+  n=$(grep -o 'out.append("/admin/x\.[0-9a-f]*\.css")' "$WORK/asset/app/.gweb/"*.goose | wc -l | tr -d ' ')
+  check "$([ "$n" = 2 ] && echo ok)" "@asset(\"/x.css\") and @asset(\"/admin/x.css\") in the package are /admin/x.HASH.css (found $n)"
+else
+  bad "gweb gen with @asset in a package"; echo "$out"
+fi
+printf '@asset("/nope.css")\n' >> "$WORK/asset/pkg/app/page.html"
+out=$("$GWEB" -C "$WORK/asset/app" gen 2>&1)
+case "$out" in *"error: no public file at /nope.css (looked for public/nope.css in this package, at /admin/nope.css, and in the app)"*) ok ;;
+  *) bad "a missing package asset:"; echo "$out" ;; esac
+
 # 2. Build and serve, when there is a compiler.
 goose=${GOOSE:-}
 [ -z "$goose" ] && goose=$(command -v goose 2>/dev/null || true)

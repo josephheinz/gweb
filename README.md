@@ -1113,6 +1113,7 @@ and answers 304. `/_gw/` runtime modules keep plain URLs and revalidate.
 ```
 
 - `@asset("/path")` takes one string literal and fails the build when `public/path` does not exist.
+  In a mounted package it is the package's own `public/path` at its mount first (1.6; see Packages).
   For a path known at run time, `gweb::asset_url(path)` returns the hashed URL, or `path` when unknown.
 - Text files of 1 KB or more are gzipped at build time (`Content-Encoding: gzip`, `Vary: Accept-Encoding`,
   ETag ending `-gz`) when the client sends `Accept-Encoding: gzip`. HTML and JSON are not compressed here;

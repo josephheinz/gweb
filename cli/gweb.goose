@@ -2678,8 +2678,33 @@ fn asset_call(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
         err(path, ln, "@asset() takes one string literal, as in @asset(\"/css/site.css\")");
         return;
     }
+    // In a mounted package's file, "/x.js" is the package's own public/x.js at its mount first (1.6), else the URL as written.
+    let mount = pkg_mount_of(path);
+    if mount.len > 0 && want.len > 0 && want[0] == '/' {
+        var under: u8[>..] = [];
+        format(under, "/", mount, want);
+        for s in statics {
+            if s.url == under { out.append("out.append(\""); lit(out, s.hashed); out.append("\"); "); return; }
+        }
+        if !has_static(want) {
+            var m: u8[>..] = [];
+            format(m, "no public file at ", want, " (looked for public", want, " in this package, at ", under, ", and in the app)");
+            err(path, ln, m);
+            return;
+        }
+    }
     let i = static_index(path, ln, want);
     if i >= 0 { out.append("out.append(\""); lit(out, statics[i].hashed); out.append("\"); "); }
+}
+
+// The mount of the package whose folder holds path (the deepest such package), or "" for the app's own files.
+fn pkg_mount_of(path: const u8[:]) -> const u8[:] {
+    var best = -1;
+    for pk, i in pkgs {
+        if pk.mount.len == 0 || pk.dir.len == 0 { continue; }
+        if path.len > pk.dir.len && starts_with(path, pk.dir) && path[pk.dir.len] == '/' && (best < 0 || pk.dir.len > pkgs[best].dir.len) { best = i; }
+    }
+    return if best >= 0 { pkgs[best].mount } else { "" };
 }
 
 // ---------------------------------------------------------------- @image
