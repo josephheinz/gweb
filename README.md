@@ -1123,6 +1123,9 @@ and answers 304. `/_gw/` runtime modules keep plain URLs and revalidate.
 - `@asset("/path")` takes one string literal and fails the build when `public/path` does not exist.
   In a mounted package it is the package's own `public/path` at its mount first (1.6; see Packages).
   For a path known at run time, `gweb::asset_url(path)` returns the hashed URL, or `path` when unknown.
+  Server code reads a public file with `gweb::public_file(url, out) -> bool` (1.6): the bytes served at that plain or
+  hashed URL (minified CSS stays minified) are appended to `out`, from the binary, or from disk in a dev build; false
+  for a URL that is not a public file. A mounted package's files are at its mount (`/admin/x.svg`).
 - Text files of 1 KB or more are gzipped at build time (`Content-Encoding: gzip`, `Vary: Accept-Encoding`,
   ETag ending `-gz`) when the client sends `Accept-Encoding: gzip`. HTML and JSON are not compressed here;
   the proxy does that.

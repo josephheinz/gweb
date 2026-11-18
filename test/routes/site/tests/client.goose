@@ -64,3 +64,9 @@ fn test_header_from_load(t: gweb::Tester&) {
     gweb::expect_contains(t, res.body, "preview ok=true");
     gweb::expect_header(t, res, "cache-control", "no-store");
 }
+
+// gweb::public_file reads a public/ file's served bytes (1.6).
+fn test_public_file(t: gweb::Tester&) {
+    let res = site::get(t, "/api/pub");
+    gweb::expect_contains(t, res.body, "ok=true missing=false static file");
+}

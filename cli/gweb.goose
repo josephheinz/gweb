@@ -3915,6 +3915,19 @@ fn gen_asset_url(m: u8[>..]&) {
     m.append("    return path;\n}\n");
 }
 
+// gweb::public_file(url, out) (1.6): the bytes served at a public/ URL (plain or hashed), for server code that reads
+// one (an email template, a font for a generated image). The embedded bytes, or the file on disk in a dev build.
+fn gen_public_file(m: u8[>..]&) {
+    m.append("fn gweb::public_file(url: const u8[:], out: u8[>..]&) -> bool {\n");
+    for s, i in statics {
+        m.append("    if url == \""); lit(m, s.url); m.append("\"");
+        if s.hashed != s.url { m.append(" || url == \""); lit(m, s.hashed); m.append("\""); }
+        if dev_gen { m.append(" { return read_file(\""); lit(m, s.file); m.append("\", out); }\n"); }
+        else { format(m, " { out.append(static_bytes(", i, ")); return true; }\n"); }
+    }
+    m.append("    return false;\n}\n");
+}
+
 // Both routes answer GET and HEAD only, like a route.goose with those two methods.
 fn gen_sitemap(m: u8[>..]&) {
     if !has_sitemap { return; }
@@ -4402,6 +4415,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     m.append("\n");
     gen_static(m);
     gen_asset_url(m);
+    gen_public_file(m);
     m.append("\n");
     for d, i in dirs {
         if d.route { gen_route_fn(m, d, i); }

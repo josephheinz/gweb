@@ -26,9 +26,9 @@ show() { echo "$1" | sed 's/^/    /'; }
 # 1 and 2. The site.
 cp -R "$HERE/routes/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then
-  case "$out" in *"routes: 11 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 11 tests ... 0 failed':"; show "$out" ;; esac
+  case "$out" in *"routes: 12 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 12 tests ... 0 failed':"; show "$out" ;; esac
   for name in t_basic::test_page t_basic::test_route_json t_basic::test_static_file t_basic::test_post_form t_basic::test_counter_second \
-              t_basic::test_counter_third t_client::test_client_ip t_client::test_rate_limit_per_address t_client::test_trust_proxy t_client::test_upload t_client::test_header_from_load; do
+              t_basic::test_counter_third t_client::test_client_ip t_client::test_rate_limit_per_address t_client::test_trust_proxy t_client::test_upload t_client::test_header_from_load t_client::test_public_file; do
     case "$out" in *"ok $name"*) ok ;; *) bad "no 'ok $name' line:"; show "$out" ;; esac
   done
   # 1.6: an upload's file is deleted after the reply.
