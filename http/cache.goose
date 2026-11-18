@@ -118,14 +118,14 @@ fn _cache_store(req: const http::Request&, ctx: Ctx&, res: http::Response&, seco
 // Stores under your own key. seconds 0 keeps the reply until gweb::epoch_bump(). Never stores a reply that has a
 // CSRF token, since the next visitor would get it.
 fn cache_store_key(req: const http::Request&, ctx: Ctx&, res: http::Response&, key: const u8[:], seconds: i64) {
-    if seconds < 0 || key.len > CACHE_MAX_KEY || ctx.csrf.len > 0 { return; }
+    if seconds < 0 || key.len > CACHE_MAX_KEY { return; }
     _cache_put(req, ctx, res, key, if seconds == 0 { CACHE_FOREVER_MS } else { seconds * 1000 });
 }
 
 fn _cache_put(req: const http::Request&, ctx: Ctx&, res: http::Response&, key: const u8[:], ttl_ms: i64) {
     if !_cacheable_request(req) { return; }
     if ctx.outcome != Outcome.Continue || res.status != http::Status.Ok { return; }
-    if ctx.set_cookies.len > 0 || res.body.len > CACHE_MAX_BODY { return; }
+    if ctx.set_cookies.len > 0 || _csrf_in_reply(ctx, res) || res.body.len > CACHE_MAX_BODY { return; }
     let etag = _cache_etag(res.body);
     if res.headers.cap - res.headers.len < 128 { return; }
     http::set_header(res, "ETag", etag);

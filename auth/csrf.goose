@@ -31,25 +31,39 @@ fn _csrf_valid(t: const u8[:]) -> bool {
     return true;
 }
 
-// Reuses the request's token or makes one; false after writing a 500.
-fn csrf_begin(req: const http::Request&, ctx: Ctx&, res: http::Response&) -> bool {
-    no_store(res);
+// Puts the request's token, or a new one, in ctx.csrf without starting it (1.7). The generated page, not-found
+// and error replies call this before load; _csrf_end starts the token only when the reply body shows it.
+// False when no entropy is available. Does nothing when a token is already there.
+fn _csrf_arm(req: const http::Request&, ctx: Ctx&) -> bool {
     if ctx.csrf.len > 0 { return true; }
     let name = _csrf_cookie_name(req, ctx.auth.trust_proxy);
+    ctx._csrf_host = starts_with(name, "__Host-");
     let sent, has = http::cookie(req, name);
     if has && _csrf_valid(sent) {
         ctx.csrf.append(sent);
+        ctx._csrf_new = false;
+        ctx._csrf_armed = true;
         return true;
     }
     var raw: u8[..16] = [0; 16];
-    if c_entropy(raw) != 0 {
-        for b in raw {
-            ctx.csrf.push(CSRF_HEX[(b >> 4) as i64]);
-            ctx.csrf.push(CSRF_HEX[(b & 15) as i64]);
-        }
-        if set_cookie(ctx, name, ctx.csrf, CookieOptions { secure: starts_with(name, "__Host-"), .. }) { return true; }
+    if c_entropy(raw) == 0 { return false; }
+    for b in raw {
+        ctx.csrf.push(CSRF_HEX[(b >> 4) as i64]);
+        ctx.csrf.push(CSRF_HEX[(b & 15) as i64]);
     }
+    ctx._csrf_new = true;
+    ctx._csrf_armed = true;
+    return true;
+}
+
+// Starts the token now: reuses the request's or makes one, sets its cookie when new and Cache-Control: no-store,
+// whatever the page then renders. False after writing a 500.
+fn csrf_begin(req: const http::Request&, ctx: Ctx&, res: http::Response&) -> bool {
+    no_store(res);
+    if ctx.csrf.len > 0 && !ctx._csrf_armed { return true; }
+    if _csrf_arm(req, ctx) && _csrf_commit(ctx) { return true; }
     ctx.csrf.clear();
+    ctx._csrf_armed = false;
     http::json_error(res, http::Status.InternalServerError, "csrf token unavailable");
     return false;
 }

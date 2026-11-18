@@ -57,7 +57,7 @@ struct Dir {
     no_mw: bool = false,          // route.goose has const MIDDLEWARE = false; (1.6): its own source's middleware is skipped
     max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
     too_large: bool = false,      // page.goose or route.goose defines fn too_large( (gweb 1.5)
-    error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false,   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
+    error_html: bool = false, error_ns: u8[..32] = "",   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
     loading: bool = false, loading_ns: u8[..32] = "",   // loading.html in this folder (DESIGN-ADDENDUM-14, section 4)
     in_sitemap: bool = true,                                                         // false: page.goose has const SITEMAP = false;
     revalidate: i64 = 0,                                                             // seconds from const REVALIDATE = N;, 0 = not cached
@@ -113,7 +113,6 @@ var msg_variable = false;             // state.goose declares const VARIABLE_MSG
 var has_jobs = false;
 var has_jobs_schedule = false;
 var has_not_found = false;
-var not_found_csrf = false;
 var uses_sqlite = false;
 var uses_keys = false;   // code or templates call gweb::login, gweb::session or the signed cookie functions
 var map_text: u8[>..];
@@ -3634,7 +3633,7 @@ fn gen_page_reply(m: u8[>..]&, d: const Dir&, props: bool, indent: const u8[:], 
     format(m, "\n", indent, "    if ctx.status != 0 { res.status = http::status_from_code(ctx.status); }\n", indent, "}\n");
 }
 
-// True when the page, or a layout around it, writes gweb::csrf_ fields.
+// True when the page, or a layout around it, mentions gweb::csrf_: only for the REVALIDATE build error.
 fn starts_token(d: const Dir&) -> bool {
     if d.page_csrf { return true; }
     for o in dirs { if o.layout && o.layout_csrf && is_ancestor(o.rel, d.rel) { return true; } }
@@ -3661,7 +3660,8 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
         m.append("        return;\n    }\n");
     }
     m.append("    gweb::html(res, http::Status.Ok);\n");
-    if starts_token(d) { format(m, "    if !gweb::csrf_begin(", rq, ", ctx, res) { return; }\n"); }
+    // Every page readies a token before load (1.7); _csrf_end starts it (cookie, no-store) only if the reply shows it.
+    format(m, "    if !gweb::_csrf_arm(", rq, ", ctx) { http::json_error(res, http::Status.InternalServerError, \"csrf token unavailable\"); return; }\n");
     if d.frags.len > 0 {
         format(m, "    let part = gweb::_fragment_index(", rq, ", [");
         for n, k in split(d.frags, ' ') { if k > 0 { m.append(", "); } format(m, "\"", n, "\""); }
@@ -4003,13 +4003,10 @@ fn gen_finish(m: u8[>..]&) {
         m.append("            ctx.title.clear();\n            res.body.clear();\n            gweb::html(res, http::Status.NotFound);\n");
         var root_layout: u8[>..] = [];
         for d in dirs { if d.rel.len == 0 && d.layout { root_layout.append(d.layout_ns); } }
-        var root_csrf = not_found_csrf;
-        for d in dirs { if d.rel.len == 0 && d.layout && d.layout_csrf { root_csrf = true; } }
-        m.append("            ");
-        if root_csrf { m.append("if gweb::csrf_begin(req, ctx, res) { "); }
+        m.append("            gweb::_csrf_arm(req, ctx);\n            ");
         if root_layout.len > 0 { format(m, root_layout, "::render(res.body, req, ctx) { nf::render(res.body, req, ctx); };"); }
         else { m.append("nf::render(res.body, req, ctx);"); }
-        m.append(if root_csrf { " }\n" } else { "\n" });
+        m.append("\n");
     } else {
         m.append("            res.body.clear();\n            gweb::_plain_not_found(res);\n");
     }
@@ -4061,23 +4058,20 @@ fn gen_error_reply(m: u8[>..]&) {
     m.append("    match error_at(route) {\n");
     for e, k in dirs {
         if !e.error_html { continue; }
-        var csrf = e.error_csrf;
         var wrapped: u8[>..] = [];
         var closes = 0;
         for o in dirs {
             if o.layout && is_ancestor(o.rel, e.rel) {
                 format(wrapped, o.layout_ns, "::render(res.body, req, ctx) { ");
                 closes += 1;
-                if o.layout_csrf { csrf = true; }
             }
         }
         format(wrapped, e.error_ns, "::render(res.body, req, ctx, info);");
         for c in closes { wrapped.append(" };"); }
-        format(m, "        ", k, " => {\n            ");
-        if csrf { m.append("if gweb::csrf_begin(req, ctx, res) { "); }
+        format(m, "        ", k, " => {\n            gweb::_csrf_arm(req, ctx);\n            ");
         if closes > 0 { format(m, "if attempt == 1 { ", wrapped, " } else { ", e.error_ns, "::render(res.body, req, ctx, info); }"); }
         else { format(m, e.error_ns, "::render(res.body, req, ctx, info);"); }
-        m.append(if csrf { " }\n        },\n" } else { "\n        },\n" });
+        m.append("\n        },\n");
     }
     m.append("        _ => gweb::_builtin_page(res.body, info),\n    }\n");
     // The overlay is for crashes and 5xx (1.6): a 404 or 403 from gweb::fail is an answer, not a bug.
@@ -4490,6 +4484,7 @@ thread_fn crash_reply(slot: i64, cfg: gweb::Config, attempt: i64) {
             var res = http::new_response();
             error_reply(gweb::_inflight_route_of(slot), attempt, req, ctx, res, abort_text);
             ctx.auth = cfg.auth;
+            gweb::_csrf_end(ctx, res);
             gweb::_apply_cookies(ctx, res);
             gweb::_apply_security(ctx, res, cfg);
             gweb::_dev_inject(res, cfg.dev_id, "");
@@ -5245,8 +5240,6 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             app_path(src, d, "error.html");
             var imports: u8[>..] = [];
             var frags: u8[>..] = [];
-            var text: u8[>..] = [];
-            if read_file(src, text) { d.error_csrf = mentions_csrf(text); }
             add_default_imports(imports);
             imports.append("import gweb.site.errors; ");
             gen_template(src, d.error_ns, d.error_ns,
@@ -5308,10 +5301,9 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             err(src, 0, "a page with REVALIDATE cannot use a CSRF token; its HTML would be shared by every visitor");
         }
     }
-    not_found_csrf = false;
     if has_not_found {
         var text: u8[>..] = [];
-        if read_src("app/not-found.html", text) { not_found_csrf = mentions_csrf(text); if mentions_keys(text) { uses_keys = true; } }
+        if read_src("app/not-found.html", text) { if mentions_keys(text) { uses_keys = true; } }
         var imports: u8[>..] = [];
         add_default_imports(imports);
         var frags: u8[>..] = [];

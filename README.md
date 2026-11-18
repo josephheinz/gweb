@@ -773,10 +773,15 @@ secret, one token for the browser session.
 <meta name="csrf-token" content="{gweb::csrf_token(ctx)}">   <!-- a script sends it as X-CSRF-Token -->
 ```
 
-- `gweb` starts the token (cookie and `Cache-Control: no-store`) for a page whose `page.html`,
-  `page.goose` or wrapping `layout.html` mentions `gweb::csrf_`. A field written by a `lib/` partial is
-  not seen by that scan; call `gweb::csrf_begin(req, ctx, res)` from `before` middleware, which does
-  nothing when the token is already started. Pages that use no token send no cookie and no header.
+- The token is decided per request (1.7). Before `load`, every page (and `not-found.html` and `error.html`)
+  readies a token in `ctx.csrf`: the browser's `gw_csrf`, or a new one. It is started, with the cookie when new and
+  `Cache-Control: no-store`, only when the reply's body shows it: a `csrf_field` or `csrf_token` that was rendered,
+  from a page, layout, view, or `lib/` partial. A page that rendered no token this time (a catch-all whose
+  form is only on its contact page) sends no cookie and no `no-store`, and its reply can be cached.
+- `gweb::csrf_begin(req, ctx, res)` starts the token at once, whatever is rendered: from `load`, a route or `before`
+  middleware, for a token used outside the body (a header you set). It does nothing more when the token is started.
+- The check of a POST does not depend on any of this: every page `fn POST` and unsafe route method checks the token,
+  whether or not the page rendered one, so a POST to a page whose GET showed no form gets `403`.
 - A gw-target form sends its hidden field with the fragment POST, so fragments need no extra code.
   Put the field inside the fragment so it comes back in every reply.
 - When `X-CSRF-Token` is present only the header is read; otherwise the `_csrf` field of a
@@ -1207,7 +1212,8 @@ const REVALIDATE = 60;     // page.goose: cache this page's GET reply for 60 s
   reply of at most 1 MB. It answers with an `ETag` and `Cache-Control: public, max-age=0, must-revalidate`,
   and 304 to `If-None-Match`. Middleware `before` still runs on every request.
 - Never cache a page that reads cookies or the user: every visitor would get the same HTML. A reply that sets
-  a cookie is not stored, and a page that starts a CSRF token with `REVALIDATE` is a build error.
+  a cookie or shows a CSRF token is not stored, and a page whose own files or layouts mention `gweb::csrf_`
+  with `REVALIDATE` is a build error.
 - POST and fragment requests skip the cache. Each worker keeps at most 512 entries and 16 MB.
 
 Your own keys and the epoch, for a site that serves several hosts or changes its content at run time:

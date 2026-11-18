@@ -42,7 +42,7 @@ struct Ctx {
     owner_fd: i32,            // -1 without app/state.goose
     outcome: Outcome,
     fragment: bool = false,   // fragment replies get no dev script
-    csrf: u8[..32] = "",      // the page's CSRF token; "" until gweb::csrf_begin
+    csrf: u8[..32] = "",      // the page's CSRF token; "" until gweb::csrf_begin or _csrf_arm
     locale: i64 = 0,          // index into the generated t::TAGS; 0 is the default locale
     redirect_status: i64,
     location: u8[..8192],     // gweb::redirect's URL (MAX_REDIRECT); a longer one is refused, not cut
@@ -80,7 +80,10 @@ struct Ctx {
     job_id: i64 = 0,              // set in a job runner's ctx
     attempt: i64 = 0,
     too_large: i64 = 0,           // the body limit the request is over (--max-upload, --max-body or MAX_UPLOAD); 0 = within it
-    _peer: u8[..64] = ""          // a route test's Tester.client_ip: the client address when there is no connection
+    _peer: u8[..64] = "",         // a route test's Tester.client_ip: the client address when there is no connection
+    _csrf_armed: bool = false,    // ctx.csrf is ready but not started: started (cookie, no-store) only if the reply body shows it
+    _csrf_new: bool = false,      // the armed token was minted here, so starting it sets the cookie
+    _csrf_host: bool = false      // the cookie is __Host-gw_csrf
 }
 
 // A file of a multipart post (gweb::upload). Lives here because Ctx holds it.
@@ -339,6 +342,37 @@ fn clear_cookie(ctx: Ctx&, name: const u8[:], opts: CookieOptions = CookieOption
     var o = opts;
     o.max_age = 0;
     return set_cookie(ctx, name, "", o);
+}
+
+// Sets the cookie of an armed token minted for this request; the token is then started. False when it does not fit.
+fn _csrf_commit(ctx: Ctx&) -> bool {
+    if ctx._csrf_armed && ctx._csrf_new {
+        let name = if ctx._csrf_host { "__Host-gw_csrf" } else { "gw_csrf" };
+        if !set_cookie(ctx, name, ctx.csrf, CookieOptions { secure: ctx._csrf_host, .. }) { return false; }
+    }
+    ctx._csrf_armed = false;
+    return true;
+}
+
+// True when this reply carries the CSRF token: started by csrf_begin, or armed and written into the body.
+fn _csrf_in_reply(ctx: const Ctx&, res: const http::Response&) -> bool {
+    if ctx.csrf.len == 0 { return false; }
+    return !ctx._csrf_armed || find(res.body, ctx.csrf) >= 0;
+}
+
+// After the handler (1.7): a reply that carries the token gets Cache-Control: no-store, and an armed token that the
+// body shows is started (its cookie set). An armed token the body does not show is dropped: no cookie, no header.
+// False, with a 500, when the cookie does not fit.
+fn _csrf_end(ctx: Ctx&, res: http::Response&) -> bool {
+    if ctx.streamed || !_csrf_in_reply(ctx, res) { return true; }
+    if !_csrf_commit(ctx) {
+        ctx.csrf.clear();
+        res.headers.clear();
+        http::json_error(res, http::Status.InternalServerError, "csrf token unavailable");
+        return false;
+    }
+    if find(res.headers, "Cache-Control: no-store\r\n") < 0 { http::set_header(res, "Cache-Control", "no-store"); }
+    return true;
 }
 
 // False when the lines do not fit beside res.headers: the reply becomes a 500 with no cookies, so a cookie is never dropped silently.
@@ -1111,6 +1145,7 @@ fn _respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Co
         return -1, false;
     }
     var static_index = D(req, ctx, res);
+    if !_csrf_end(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
     if !_apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
     if !ctx.streamed && !_apply_security(ctx, res, cfg) { static_index = -1; ctx.detach = Detach.None; }
     if !ctx.fragment { _dev_inject(res, cfg.dev_id, ctx.nonce); }

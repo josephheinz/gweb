@@ -131,6 +131,9 @@ own `public/x` first; `const MIDDLEWARE = false;` in `route.goose`; `morph(from,
   public file may not use either prefix, and `gweb::reserved_prefixes()` lists them.
 - Cookies: `gw_session` and `gw_csrf`, and their `__Host-` forms, which are used, with `Secure`, when the request is
   HTTPS (direct, or behind a proxy with `GWEB_TRUST_PROXY`). The `_csrf` form field.
+- When the CSRF token starts (1.7): on a reply whose body shows it, or when `gweb::csrf_begin` runs. A reply that
+  shows none sets no `gw_csrf` and no `Cache-Control: no-store` for it. Every page POST and unsafe route method is
+  checked, whatever was rendered.
 - `X-Forwarded-Proto` counts only under `GWEB_TRUST_PROXY`.
 
 ## Internal names

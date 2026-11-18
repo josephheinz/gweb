@@ -161,6 +161,41 @@ fn main() {
     gweb::_fragment_reply(frag, ctx_h, res_h);
     check(count(res_h.headers, "Cache-Control") == 1, "fragment_reply adds no second Cache-Control");
 
+    // 1.7: _csrf_arm readies a token without a cookie or header; _csrf_end starts it only when the body shows it
+    var ctx_a = gweb::_new_ctx(0, -1);
+    var res_a = http::new_response();
+    check(gweb::_csrf_arm(plain, ctx_a) && gweb::_csrf_valid(ctx_a.csrf), "arm mints a token");
+    check(ctx_a.set_cookies.len == 0 && res_a.headers.len == 0, "arm sets no cookie and no header");
+    res_a.body.append("<p>no form</p>");
+    check(gweb::_csrf_end(ctx_a, res_a), "end without the token");
+    check(ctx_a.set_cookies.len == 0 && find(res_a.headers, "Cache-Control") < 0, "unused token: no cookie, no no-store");
+    check(!gweb::_csrf_in_reply(ctx_a, res_a), "unused token is not in the reply");
+    var ctx_b2 = gweb::_new_ctx(0, -1);
+    var res_b2 = http::new_response();
+    gweb::_csrf_arm(plain, ctx_b2);
+    gweb::csrf_field(res_b2.body, ctx_b2);
+    check(gweb::_csrf_in_reply(ctx_b2, res_b2), "a field in the body is in the reply");
+    check(gweb::_csrf_end(ctx_b2, res_b2), "end with the token");
+    check(starts_with(ctx_b2.set_cookies, "Set-Cookie: gw_csrf=") && find(ctx_b2.set_cookies, ctx_b2.csrf) > 0, "used token: its cookie");
+    check(count(res_b2.headers, "Cache-Control: no-store") == 1, "used token: no-store");
+    check(gweb::_csrf_end(ctx_b2, res_b2) && count(ctx_b2.set_cookies, "Set-Cookie") == 1 && count(res_b2.headers, "Cache-Control") == 1, "end twice: one cookie, one header");
+    var ctx_c2 = gweb::_new_ctx(0, -1);
+    var res_c2 = http::new_response();
+    gweb::_csrf_arm(have, ctx_c2);
+    check(ctx_c2.csrf == T, "arm reuses the request's token");
+    gweb::csrf_field(res_c2.body, ctx_c2);
+    gweb::_csrf_end(ctx_c2, res_c2);
+    check(ctx_c2.set_cookies.len == 0 && count(res_c2.headers, "Cache-Control: no-store") == 1, "reused token in the body: no-store, no cookie");
+    // csrf_begin after arm starts the armed token at once
+    var ctx_d2 = gweb::_new_ctx(0, -1);
+    var res_d2 = http::new_response();
+    gweb::_csrf_arm(plain, ctx_d2);
+    let armed = ctx_d2.csrf;
+    check(gweb::csrf_begin(plain, ctx_d2, res_d2) && ctx_d2.csrf == armed, "begin keeps the armed token");
+    check(count(ctx_d2.set_cookies, "Set-Cookie: gw_csrf=") == 1 && count(res_d2.headers, "Cache-Control: no-store") == 1, "begin sets the cookie and no-store");
+    res_d2.headers.clear();
+    check(gweb::_csrf_end(ctx_d2, res_d2) && count(res_d2.headers, "Cache-Control: no-store") == 1 && count(ctx_d2.set_cookies, "Set-Cookie") == 1, "a started token keeps no-store after the headers are cleared");
+
     // csrf_field and csrf_token
     var out: u8[>..] = [];
     gweb::csrf_field(out, ctx_c);
