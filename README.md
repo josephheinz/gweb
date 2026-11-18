@@ -130,6 +130,11 @@ Helpers: `gweb::param(ctx, "id")`, `gweb::param_int`, `gweb::query(req, "q", out
 `gweb::redirect(ctx, "/to", 302)`, and `state::ask(ctx, state::Msg.List) -> Reply, bool`.
 Set `ctx.title` in `load`; layouts read it.
 
+`req.method` is an `http::Method`: `Get`, `Head`, `Post`, `Put`, `Patch`, `Delete`, `Options`, or `Other` for any
+other verb. Compare with `req.method == http::Method.Post`, or `match req.method { Post => ..., _ => ... }`.
+`req.path` and `req.query` are the target's parts (no `?`); `http::header(req, "name")` returns the value and whether
+it was sent.
+
 ## Catch-all routes
 
 | Folder | Matches | Example under `app/docs/` |
