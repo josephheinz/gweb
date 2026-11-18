@@ -1382,6 +1382,46 @@ fn close(ctx: gweb::Ctx&, id: u64, topic: const u8[:]) { }
   route. A route is not CSRF-checked for GET.
 - Behind a proxy: see [docs/DEPLOY-PROXY.md](docs/DEPLOY-PROXY.md).
 
+## Mail
+
+`import gweb.ops.mail;` (1.8). One message to one recipient, with `GWEB_MAIL` choosing the transport:
+
+- `log`: the whole message goes to the log at Info; the default in `gweb dev` and `gweb test`.
+- `smtp://host:port`: plain SMTP (`EHLO`, `MAIL FROM`, `RCPT TO`, `DATA`; 5 s connect, 10 s in all). No TLS and no `AUTH`, so the
+  host must be loopback or private (10/8, 172.16/12, 192.168/16, fc00::/7) or the server exits 2 at startup. Point it at a
+  local relay or sidecar that does TLS and `AUTH` (see [docs/DEPLOY.md](docs/DEPLOY.md)).
+- `off`: `mail_send` logs once and returns false; the default in production when `GWEB_MAIL` is unset.
+
+```goose
+var m = gweb::Mail { to: "ann@example.com", reply_to: "bob@example.com", subject: "Thanks", text: "We got it." };
+m.html.append("<p>We got it.</p>");                // optional: multipart/alternative
+if !gweb::mail_send(ctx, m) { return false; }       // false: refused or failed, the reason is logged
+```
+
+`from` defaults to `GWEB_MAIL_FROM`. Addresses are plain `user@host`; a CR, LF or NUL in any header value, so a form field
+cannot inject a header, is refused. Non-ASCII subjects and bodies are encoded (RFC 2047, base64).
+
+**Send from a job**, so a slow relay holds no request and a failure is retried with the job backoff:
+
+```goose
+// app/jobs.goose
+enum Job { Mail { to: u8[..320], subject: u8[..256], text: u8[..2048] } }
+
+fn run(job: const Job&, ctx: gweb::Ctx&) -> bool {
+    match job {
+        Mail j => {
+            var m = gweb::Mail { to: j.to, subject: j.subject, text: j.text };
+            return gweb::mail_send(ctx, m);
+        },
+    }
+}
+// in a handler: jobs::enqueue(ctx, jobs::Job.Mail { to: email, subject: "Thanks", text: body });
+```
+
+In route tests `t.mails` holds what `mail_send` logged: `gweb::expect_contains(t, t.mails, "Subject: Thanks")`. A request
+collects its mails; after a `mail_send` or `jobs::run` of your own, call `gweb::take_mails(t)` first. The sender is
+`test@localhost` unless `GWEB_MAIL_FROM` is set. Queued jobs are lost on a restart (see Operations).
+
 ## Route tests
 
 `tests/*.goose` holds route tests. `gweb test` builds them with the app's real
@@ -1435,6 +1475,7 @@ fn test_add(t: gweb::Tester&) {
   non-GET request sends the jar's `gw_csrf` as `X-CSRF-Token`, adding a fixed token when there is none. Set
   `t.auto_csrf = false` to test a refusal. `t.headers` holds extra header lines for the next request only.
   `t.host` is the `Host` header of every request (`test`): set it to test an app that serves several hosts.
+- Mail (1.8): `t.mails` keeps the messages `mail_send` logged; see Mail.
 - `state::ask` calls `state::handle` directly on `main`.
 
 Rules for authors:

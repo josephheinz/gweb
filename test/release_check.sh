@@ -175,6 +175,8 @@ step routes sh "$HERE/routes.sh"
 step i18n env PORT="${PORT:-4000}" sh "$HERE/i18n.sh"
 step valid_test goose_test valid_test
 step upload_test goose_test upload_test
+step mail_test goose_test mail_test
+step mail env PORT="${PORT:-60910}" GOOSE="$GOOSE" sh "$HERE/mail.sh"
 step markdown_test goose_test markdown_test
 step srcmap sh "$HERE/srcmap.sh"
 step devbuild env PORT="${PORT:-4041}" sh "$HERE/devbuild.sh"

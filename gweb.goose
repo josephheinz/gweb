@@ -948,6 +948,10 @@ fn b64url(out: u8[>..]&, data: const u8[:]) {
 
 // ---- env files and typed env
 
+// gweb test: mail_send (ops/mail.goose) with the log transport appends each message to _mail_out; take_mails moves it to t.mails.
+var _mail_capture = false;
+var _mail_out: u8[..16384] = "";
+
 extern fn c_setenv(name: const u8[:], value: const u8[:]) -> i32 = "gweb_setenv";
 
 // Appends GWEB_ENV, or "production" when it is unset or empty.

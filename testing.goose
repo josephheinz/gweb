@@ -13,11 +13,19 @@ let FORM_HEX = "0123456789ABCDEF";
 // headers: extra lines for the next request only. cookies: the jar, "name=value; name=value". host: the Host header of
 // every request ("test"), for an app that serves several hosts. client_ip: the peer address gweb::client_ip reports
 // ("": none, as before 1.6). trust_proxy: as GWEB_TRUST_PROXY, so an X-Forwarded-For in headers is the client.
-// upload_dir: where a multipart request's files go (1.6), emptied by each gweb test run.
+// mails: the messages mail_send logged (1.8), each whole, appended; cut when full. upload_dir: where a multipart request's files go (1.6), emptied by each gweb test run.
 struct Tester { failures: i64 = 0, checks: i64 = 0, name: u8[..128] = "",
                 auto_csrf: bool = true, headers: u8[..2048] = "",
                 cookies: u8[..4096] = "", host: u8[..128] = "test",
-                client_ip: u8[..64] = "", trust_proxy: bool = false, upload_dir: u8[..256] = ".gweb.test/uploads" }
+                client_ip: u8[..64] = "", trust_proxy: bool = false, upload_dir: u8[..256] = ".gweb.test/uploads", mails: u8[..16384] = "" }
+
+// Moves the messages mail_send logged since the last call into t.mails; each request and each test does it, so call it
+// after a mail_send of your own.
+fn take_mails(t: Tester&) {
+    let room = t.mails.cap - t.mails.len;
+    t.mails.append(_mail_out[..min(_mail_out.len, room)]);
+    _mail_out.clear();
+}
 
 // The boundary of gweb::multipart_field and multipart_file, which site::post_multipart closes.
 let TEST_BOUNDARY = "gweb-test-boundary-7d1f";
@@ -130,6 +138,7 @@ fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: 
     raw.append(body);
 
     _quiet_client_errors = true;
+    _mail_capture = true;
     var res = http::new_response();
     // req points into raw, so raw stays alive until the reply is built
     let req, parsed = http::parse_request(raw);
@@ -161,6 +170,7 @@ fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: 
     if req.method == http::Method.Head { res.body.clear(); }
     for i in ctx.uploads.len { if ctx.uploads[i].path.len > 0 { c_up_unlink(ctx.uploads[i].path); } }
     _jar_update(t, res.headers);
+    take_mails(t);
     return res;
 }
 

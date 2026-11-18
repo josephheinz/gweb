@@ -1,6 +1,6 @@
 # Proposal: a minimal mailer
 
-Status: proposal (blind developer review, contact form step). Not implemented.
+Status: Implemented in 1.8 (relay-only SMTP, as proposed). Differences: the module is `gweb.ops.mail`; `Mail` is a `root struct`; addresses are plain `user@host` (no display names); `gweb test` sends from `test@localhost` unless `GWEB_MAIL_FROM` is set; `take_mails(t)` collects mails sent outside a request.
 
 ## Problem
 

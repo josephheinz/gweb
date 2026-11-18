@@ -4557,6 +4557,7 @@ fn gen_main_fn(m: u8[>..]&) {
     m.append("\nfn main() {\n    var cfg = gweb::_config_from_args();\n");
     if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"gweb: set GWEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
     if has_config { m.append("    if !config::check() { exit(2); }\n"); }
+    m.append("    let mail_err = gweb::mail_check_config();\n    if mail_err.len > 0 { print(mail_err); exit(2); }\n");
     if dev_gen { m.append("    gweb::_dev_lits_load();\n"); }
     // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
     if has_state {
@@ -4647,7 +4648,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     gen_goose_pkgs(m);
     m.append("import os;\nimport net.http;\nimport gweb.site.template;\nimport gweb.site.meta;\nimport gweb.site.sitemap;\nimport gweb.http.static;\nimport gweb.ops.owner;\nimport gweb.forms.form;\nimport gweb.auth.csrf;\nimport gweb.forms.valid;\nimport gweb.forms.upload;\nimport gweb.site.errors;\nimport gweb.auth.crypto;\nimport gweb.auth.session;\nimport gweb.auth.rate;\nimport gweb.auth.cors;\nimport gweb.http.cache;\nimport gweb.http.stream;\nimport gweb.http.push;\n");
     if uses_hub { m.append("import net.hub;\n"); }
-    m.append("import gweb.ops.log;\n");
+    m.append("import gweb.ops.log;\nimport gweb.ops.mail;\n");
     if has_jobs { m.append("import gweb.ops.jobs;\nimport jobs;\n"); }
     if has_locales { m.append("import gweb.site.i18n;\nimport t;\n"); }
     for pk in pkgs { if pk.mount.len > 0 { format(m, "import ", pk.name, "_mount;\n"); } }
@@ -4807,11 +4808,11 @@ fn gen_test_main() -> u8[>..] {
     gen_main_body(m, true);
     m.append("\n");
     gen_site_fns(m);
-    m.append("\nfn main() {\n    var gw_t = gweb::Tester { .. };\n    var before = 0;\n");
+    m.append("\nfn main() {\n    var gw_t = gweb::Tester { .. };\n    var before = 0;\n    gweb::_mail_capture = true;\n");
     if has_state && has_state_init { m.append("    state::init();\n"); }
     for f in test_fns {
         format(m, "    gw_t.name.clear();\n    gw_t.name.append(\"", f.ns, "::", f.name, "\");\n");
-        format(m, "    print(\"== ", f.ns, "::", f.name, "\");\n    before = gw_t.failures;\n    ", f.ns, "::", f.name, "(gw_t);\n");
+        format(m, "    print(\"== ", f.ns, "::", f.name, "\");\n    before = gw_t.failures;\n    ", f.ns, "::", f.name, "(gw_t);\n    gweb::take_mails(gw_t);\n");
         format(m, "    if gw_t.failures == before { print(\"ok ", f.ns, "::", f.name, "\"); }\n");
     }
     format(m, "    print(\"routes: ", test_fns.len, " tests, \", gw_t.checks, \" checks, \", gw_t.failures, \" failed\");\n");

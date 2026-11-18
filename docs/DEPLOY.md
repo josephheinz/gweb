@@ -161,6 +161,15 @@ logs.
 - A full buffer (8,192 spans) drops spans and counts them in `gweb_spans_dropped_total`. A collector that hangs
   costs at most 2 s per batch.
 
+## Mail
+
+`GWEB_MAIL=smtp://host:port` sends plain SMTP: no TLS and no `AUTH`, so the host must be loopback or a private address, or
+the server exits 2 at startup. As with tracing, run a relay on the same host or as a sidecar and let it talk TLS and
+`AUTH` to the provider: a local Postfix (`relayhost = [smtp.provider.com]:587`, SASL and `smtp_tls_security_level = encrypt`),
+`msmtp` in relay mode, or a small relay container on the app's network. Then `GWEB_MAIL=smtp://127.0.0.1:25` and
+`GWEB_MAIL_FROM=noreply@example.com`. Unset, mail is `off` in production (`mail_send` returns false); `log` writes whole
+messages to the log, so keep it out of production. Send from a job (README, Mail); the relay queues and retries delivery.
+
 ## SQLite
 
 - Keep the database file on a volume (`/app/data`, or a directory the service user owns). Image layers are lost
