@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.8.0
 
 - New: faster `gweb dev` rebuilds (`docs/dev-builds.md`). A goose-cms site, save to page served: a template text
   edit 9.6 s to 2.4 s, a new `{#if}` line 10 s to 3.5 s, a Goose edit 9.6 s to 3.2 s. Production builds are
