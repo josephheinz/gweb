@@ -625,8 +625,8 @@ fn gen_form_struct(m: u8[>..]&, sname: const u8[:]) {
                    " }; gweb::_vf_text_ui(out, prefix, ui, v.", f.name, ", errs, req, rich); }");
         }
         else if f.kind == K_INT {
-            format(m, "gweb::_vf_int(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", v.", f.name,
-                   ", errs, ", if f.required { "true" } else { "false" }, ", req, rich);");
+            format(m, "{ let ui = gweb::_IntUi { field: \"", f.name, "\", label: \"", label, "\", help: \"", f.help, "\", editor: \"", f.editor,
+                   "\", required: ", if f.required { "true" } else { "false" }, " }; gweb::_vf_int(out, prefix, ui, v.", f.name, ", errs, req, rich); }");
         }
         else if f.kind == K_BOOL { format(m, "gweb::_vf_bool(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", v.", f.name, ", errs, rich);"); }
         else if f.kind == K_ENUM && (f.editor == "radio" || has_enum_labels(f.ty)) {

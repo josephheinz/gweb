@@ -232,30 +232,6 @@ fn _vf_tail(out: u8[>..]&, id: const u8[:], help: const u8[:], errs: const Field
     out.append("</p>\n");
 }
 
-fn _vf_text(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:],
-           cap: i64, value: const u8[:], errs: const FieldErrors&, required: bool, req: const http::Request&, rich: bool) {
-    var id: u8[>..] = [];
-    _vname(id, prefix, field);
-    var shown: u8[>..] = [];
-    _vf_shown(shown, req, id, errs, rich, value);
-    out.append("<p class=\"gw-field\">");
-    _vf_label(out, id, label);
-    let area = editor == "textarea" || editor == "markdown" || (editor.len == 0 && cap > 200);
-    if area {
-        out.append("<textarea id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.push('"');
-    } else {
-        out.append("<input type=\"");
-        escape(out, if editor.len > 0 { editor } else { "text" });
-        out.append("\" id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.append("\" value=\""); escape(out, shown); out.push('"');
-    }
-    out.append(" maxlength=\""); format(out, cap); out.push('"');
-    if required { out.append(" required"); }
-    if editor.len > 0 { out.append(" data-editor=\""); escape(out, editor); out.push('"'); }
-    _vf_desc(out, id, help, errs, rich);
-    if area { out.push('>'); escape(out, shown); out.append("</textarea>"); } else { out.push('>'); }
-    _vf_tail(out, id, help, errs, rich);
-}
-
 // A text field as the generated forms draw it (1.3). kind: 0 a u8[..N] (cap bytes), 1 a gweb::Text, 2 a
 // gweb::LongText (cap characters). Text is an <input> (a <textarea> for editor textarea or markdown), LongText a
 // <textarea>, and u8[..N] a <textarea> above 200 bytes. Only the plain form of a u8[..N] has maxlength: a browser cuts a
@@ -289,10 +265,16 @@ fn _vf_text_ui(out: u8[>..]&, prefix: const u8[:], ui: const _TextUi&, value: co
     _vf_tail(out, id, ui.help, errs, rich);
 }
 
-fn _vf_int(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:],
-          value: i64, errs: const FieldErrors&, required: bool, req: const http::Request&, rich: bool) {
+// An i64 field. The labels travel in a struct so that no i64 is past the sixth parameter (an x86-64 Linux Goose issue).
+struct _IntUi { field: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:], required: bool }
+
+fn _vf_int(out: u8[>..]&, prefix: const u8[:], ui: const _IntUi&, value: i64, errs: const FieldErrors&, req: const http::Request&, rich: bool) {
+    let label = ui.label;
+    let help = ui.help;
+    let editor = ui.editor;
+    let required = ui.required;
     var id: u8[>..] = [];
-    _vname(id, prefix, field);
+    _vname(id, prefix, ui.field);
     var text: u8[>..] = [];
     format(text, value);
     var shown: u8[>..] = [];
