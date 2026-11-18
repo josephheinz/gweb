@@ -1335,6 +1335,19 @@ fn _no_static(i: i64) -> const u8[:] { "" }
 
 let WEB_VERSION = embed_file("VERSION");
 
+extern fn c_dev_lits_load(path: const u8[:]) -> i64 = "gweb_dev_lits_load";
+extern fn c_dev_lit(tpl: i64, id: i64, out: u8[>..]&) = "gweb_dev_lit";
+
+// A dev build's template text (src/devlit.c): its server reads .gweb/lits as it starts, and template T appends its
+// run N.
+fn _dev_lits_load() {
+    if c_dev_lits_load(".gweb/lits") < 0 {
+        print("gweb: cannot read .gweb/lits: start a dev build's server from its project folder");
+        exit(2);
+    }
+}
+fn _dev_lit(out: u8[>..]&, tpl: i64, id: i64) { c_dev_lit(tpl, id, out); }
+
 extern fn c_now_us() -> i64 = "gweb_now_us";
 extern fn c_rfc3339(out: u8[>..]&) = "gweb_rfc3339";
 extern fn c_rand_hex(out: u8[>..]&, nbytes: i32) = "gweb_rand_hex";

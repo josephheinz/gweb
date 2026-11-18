@@ -11,6 +11,10 @@
 #    from disk, uncached.
 # 3. gweb dev: a change under public/ alone needs no compile and restarts the same binary (pages reload); a page
 #    change rebuilds.
+# 4. Template text and the split compile: a change to template text alone leaves the C as it was (.gweb/lits);
+#    gweb __devcc compiles changed units only and reuses cached objects; a string's new text with the same length is
+#    served (constants are named by content); a missing object is compiled again; GWEB_DEV_UNITS=0 compiles the C
+#    whole; a production gen has no dev text; a dev binary outside its folder says why it cannot start.
 #
 # Needs curl, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
 set -u
@@ -203,6 +207,69 @@ up=""
 for i in $(seq 1 40); do [ "$(curl -s -m 2 "$URL/new.txt")" = x ] && { up=yes; break; }; sleep 0.25; done
 check "$([ -n "$up" ] && echo ok)" "and is served"
 stopdev
+
+# 4. Template text and the split compile.
+fresh split
+S4="$WORK/split"
+serve() {   # serve TEXT: .gweb/server of split answers / with TEXT in it
+  (cd "$S4" && exec ./.gweb/server --port "$PORT" --workers 1 >"$WORK/split.log" 2>&1) &
+  PID=$!
+  got=""
+  for i in $(seq 1 40); do curl -s -m 2 "$URL/" | grep -qF -- "$1" && { got=yes; break; }; sleep 0.25; done
+  kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; PID=""
+  [ -n "$got" ]
+}
+units() { printf '%s\n' "$1" | sed -n 's/.*cc [0-9.]* (\([0-9]*\) of \([0-9]*\) units).*/\1 \2/p'; }
+out=$("$GWEB" -C "$S4" build --dev 2>&1)
+u=$(units "$out")
+check "$([ -n "$u" ] && [ "${u% *}" -gt 0 ] && echo ok)" "a dev build compiles the C in units: $out"
+check "$(grep -rq "gweb::_dev_lit(out, " "$S4/.gweb" && grep -qF '<h1>Hi ' "$S4/.gweb/lits" && echo ok)" \
+  "template text is in .gweb/lits, not the code"
+sed 's|<h1>Hi |<h1>Hello |' "$HERE/devbuild/site/app/page.html" > "$S4/app/page.html"
+out=$("$GWEB" -C "$S4" build --dev 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF 'the C was unchanged, so its compile was skipped' && echo ok)" "a change to template text alone skips the C compile: $out"
+check "$(serve '<h1>Hello 1</h1>' && echo ok)" "and the binary serves the new text: $(cat "$WORK/split.log")"
+sed 's/n: 1,/n: 1 + 41,/' "$HERE/devbuild/site/app/page.goose" > "$S4/app/page.goose"
+out=$("$GWEB" -C "$S4" build --dev 2>&1)
+u=$(units "$out")
+check "$([ -n "$u" ] && [ "${u% *}" -ge 1 ] && [ "${u% *}" -lt "${u#* }" ] && echo ok)" "a Goose change compiles some units, not all: $out"
+check "$(serve '<h1>Hello 42</h1>' && echo ok)" "and is served"
+cp "$HERE/devbuild/site/app/page.goose" "$S4/app/page.goose"
+out=$("$GWEB" -C "$S4" build --dev 2>&1)
+check "$([ "$(units "$out" | cut -d' ' -f1)" = 0 ] && echo ok)" "undoing it compiles no unit (the objects are cached): $out"
+check "$(serve '<h1>Hello 1</h1>' && echo ok)" "and the old page is back"
+# Strings: goose numbers them program-wide; gweb names them by content, so the same length must not mix them up.
+printf 'fn tag() -> const u8[:] { "abc" }\n' >> "$S4/app/page.goose"
+sed 's|<h1>Hello {props.n}</h1>|<h1>Hello {props.n} {tag()}</h1>|' "$S4/app/page.html" > "$S4/page.tmp" && mv "$S4/page.tmp" "$S4/app/page.html"
+out=$("$GWEB" -C "$S4" build --dev 2>&1)
+check "$(serve '<h1>Hello 1 abc</h1>' && echo ok)" "a new string is served: $out"
+sed 's/"abc"/"abd"/' "$S4/app/page.goose" > "$S4/page.tmp" && mv "$S4/page.tmp" "$S4/app/page.goose"
+out=$("$GWEB" -C "$S4" build --dev 2>&1)
+u=$(units "$out")
+check "$([ -n "$u" ] && [ "${u% *}" -lt "${u#* }" ] && echo ok)" "its new text, same length, compiles some units: $out"
+check "$(serve '<h1>Hello 1 abd</h1>' && echo ok)" "and the new text is served"
+# A lost object is compiled again.
+objs=$(ls -d "$HOME"/.goose/build/prog/main-*/gweb-units 2>/dev/null; ls -d "${GOOSE_HOME:-/nonexistent}"/build/prog/main-*/gweb-units 2>/dev/null)
+mine=""
+for d in $objs; do grep -q "$S4/.gweb/main.goose" "$d/../main.c" 2>/dev/null && mine=$d; done
+if [ -n "$mine" ]; then
+  rm -f "$mine"/o/*.o
+  echo '<p>again</p>' >> "$S4/app/page.html"
+  out=$("$GWEB" -C "$S4" build --dev 2>&1)
+  u=$(units "$out")
+  check "$([ -n "$u" ] && [ "${u% *}" = "${u#* }" ] && echo ok)" "with its objects gone every unit compiles again: $out"
+  check "$(serve '<p>again</p>' && echo ok)" "and the binary serves"
+else
+  bad "the program's gweb-units folder was not found"
+fi
+echo '<p>whole</p>' >> "$S4/app/page.html"
+out=$(GWEB_DEV_UNITS=0 "$GWEB" -C "$S4" build --dev 2>&1)
+check "$(printf '%s\n' "$out" | grep -q 'built .gweb/server' && ! printf '%s\n' "$out" | grep -qF ' units)' && echo ok)" "GWEB_DEV_UNITS=0 compiles the C whole: $out"
+check "$(serve '<p>whole</p>' && echo ok)" "and the binary serves"
+(cd "$WORK" && "$S4/.gweb/server" --port "$PORT" >"$WORK/away.log" 2>&1); rc=$?
+check "$([ "$rc" = 2 ] && grep -qF 'cannot read .gweb/lits' "$WORK/away.log" && echo ok)" "a dev binary away from its folder says why: $(cat "$WORK/away.log")"
+"$GWEB" -C "$S4" gen >/dev/null 2>&1
+check "$(! grep -rq '_dev_lit' "$S4/.gweb" && [ ! -f "$S4/.gweb/lits" ] && grep -rqF 'out.append("<h1>Hello ' "$S4/.gweb" && echo ok)" "a production gen inlines template text"
 
 echo "devbuild.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

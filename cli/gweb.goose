@@ -39,6 +39,7 @@ extern fn c_tree_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_tree_stamp
 extern fn c_src_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_src_stamp";
 
 // gzip.c: appends the gzip of data to out; 0 when it failed.
+extern fn c_devcc(cc: const u8[:], args: const u8[:], units: i64, times: const u8[:]) -> i32 = "gweb_devcc";
 extern fn c_gzip(data: const u8[:], out: u8[>..]&) -> i32 = "gweb_gzip";
 
 // ---------------------------------------------------------------- model
@@ -165,6 +166,9 @@ var last_warnings: u8[>..];
 var strict = false;                    // --strict: warnings fail the run
 var json_diag = false;                 // --diagnostics json
 var debug_flag = false;                // build --debug
+var dev_lits: u8[>..];                 // a dev gen's template text runs, "T N LEN:BYTES" each, for .gweb/lits
+var dev_tpl_n = 0;                     // the template being compiled (T), in gen order
+var dev_lit_n = 0;                     // its next run (N): each template counts its own, so an edit renumbers no other
 var dev_gen = false;                   // this gen is a dev build's: public/ is served from disk, URLs are not hashed
 var raw_errors = false;                // --raw-errors or GWEB_RAW_ERRORS=1: the compiler's output as it is
 var static_only = false;               // gweb dev: only public/ changed since the last build
@@ -3241,6 +3245,18 @@ fn check_slot_context(path: const u8[:], src: const u8[:]) {
     }
 }
 
+// A template's literal text. A dev build's goes to .gweb/lits, read by the server as it starts (src/devlit.c), so a
+// change to text alone leaves the C as it was and needs no C compile.
+fn emit_text_run(out: u8[>..]&, text: const u8[:]) {
+    if dev_gen {
+        format(out, "gweb::_dev_lit(out, ", dev_tpl_n, ", ", dev_lit_n, "); ");
+        format(dev_lits, dev_tpl_n, " ", dev_lit_n, " ", text.len, ":", text);
+        dev_lit_n += 1;
+        return;
+    }
+    out.append("out.append(\""); lit(out, text); out.append("\"); ");
+}
+
 // Every HTML line becomes one Goose line, so errors keep their line numbers.
 fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], kind: i64, wrap: bool,
                     frags: u8[>..]&, out: u8[>..]&, recs: u8[>..]&) -> bool {
@@ -3286,7 +3302,7 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
             if at == line.len || tscan::is_raw(raw) { continue; }
             if text.len > 0 {
                 seg_add(segs, out_col(out), tcol, 0);
-                out.append("out.append(\""); lit(out, text); out.append("\"); "); text.clear();
+                emit_text_run(out, text); text.clear();
             }
             let rest = line[at..];
             if line[at] == '}' { err(path, ln, "'}' without '{'; for a literal brace write &#125;"); return false; }
@@ -3322,7 +3338,7 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
         }
         if text.len > 0 {
             seg_add(segs, out_col(out), tcol, 0);
-            out.append("out.append(\""); lit(out, text); out.append("\"); ");
+            emit_text_run(out, text);
         }
         if segs.len > 0 { format(recs, "L ", ln, " ", ln, segs, "\n"); }
         if last { out.append(if wrap { "} }" } else { "}" }); }
@@ -3363,11 +3379,15 @@ fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], 
     var out: u8[>..] = [];
     var recs: u8[>..] = [];
     var tries = 0;
+    let lits_len = dev_lits.len;
+    dev_tpl_n += 1;
     while tries < 2 {
         tries += 1;
         frags.clear();
         out.clear();
         recs.clear();
+        while dev_lits.len > lits_len { dev_lits.pop(); }
+        dev_lit_n = 0;
         var sig: u8[>..] = [];
         if wrap { format(sig, signature[..signature.len - 1], ", gw_part: i64)"); } else { sig.append(signature); }
         var header: u8[>..] = [];
@@ -4462,16 +4482,18 @@ fn jobs::cron(s: gweb::Schedules&, name: const u8[:], spec: const u8[:], job: jo
 }
 
 // A runner takes jobs until the server stops; job_supervisor restarts it after an abort and counts the job it held
-// as a failed attempt.
+// as a failed attempt. A dev build's runner waits 50 ms at a time, not 250, so a restart after an edit waits less for
+// it to see the stop.
 fn gen_job_threads(m: u8[>..]&) {
-    m.append("""
+    var t: u8[>..] = [];
+    t.append("""
 thread_fn job_runner(slot: i64, owner_fd: i32, cfg: gweb::Config) {
     var bytes: u8[>..] = [];
     var sched: u8[>..] = [];
     while !net::stopping() {
         bytes.clear();
         sched.clear();
-        let id, attempt, got = gweb::_job_take(slot, 250, bytes, sched);
+        let id, attempt, got = gweb::_job_take(slot, @TAKE_MS@, bytes, sched);
         if !got { continue; }
         var name: u8[>..] = [];
         if sched.len > 0 { format(name, "job ", sched); } else { name.append("job"); }
@@ -4493,6 +4515,7 @@ thread_fn job_supervisor(slot: i64, owner_fd: i32, cfg: gweb::Config, chans: gwe
     gweb::_owner_leave(chans);
 }
 """);
+    format_replaced(m, t, "@TAKE_MS@", if dev_gen { "50" } else { "250" });
     m.append("\n");
 }
 
@@ -4503,6 +4526,7 @@ fn gen_main_fn(m: u8[>..]&) {
     m.append("\nfn main() {\n    var cfg = gweb::_config_from_args();\n");
     if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"gweb: set GWEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
     if has_config { m.append("    if !config::check() { exit(2); }\n"); }
+    if dev_gen { m.append("    gweb::_dev_lits_load();\n"); }
     // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
     if has_state {
         m.append("    if cfg.export_dir.len > 0 {\n");
@@ -5303,6 +5327,8 @@ fn up_of(root: const u8[:]) -> u8[>..] {
 
 fn gen(dev: bool, root: const u8[:]) -> bool {
     dev_gen = dev && root == BUILD_DIR;
+    dev_lits.clear();
+    dev_tpl_n = 0;
     has_locales = false;
     locale_notes.clear();
     locale_count = 0;
@@ -5532,6 +5558,11 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());
+    if dev_gen {
+        var lits_file: u8[>..] = [];
+        format(lits_file, root, "/", DEV_LITS);
+        write(lits_file, dev_lits);
+    }
     var map_file: u8[>..] = [];
     format(map_file, root, "/map.txt");
     write(map_file, map_text);
@@ -5647,7 +5678,7 @@ fn build_fp() -> u64 {
         var sorted: u8[..256][>..] = [];
         for n in split(names, '\n') {
             if n.len == 0 || n.len > 255 || n == "." || n == ".." { continue; }
-            if dir == BUILD_DIR && (n == "server" || n == DEV_MARK) { continue; }
+            if dir == BUILD_DIR && (n == "server" || n == DEV_MARK || n == DEV_TIMES || n == DEV_LITS) { continue; }
             var t: u8[..256] = "";
             t.append(n);
             sorted.push(t);
@@ -5671,6 +5702,8 @@ fn build_fp() -> u64 {
 }
 
 let DEV_MARK = ".cc-skipped";          // written into .gweb/ by the dev compiler when it reused the last binary
+let DEV_LITS = "lits";                // a dev build's template text (emit_text_run), read by its server as it starts
+let DEV_TIMES = ".cc-times";           // written into .gweb/ by gweb __devcc: what its compile took
 let DEV_SERVER = ".gweb.dev/server";   // the last dev binary, kept across gen (which empties .gweb/)
 
 // The dev compiler: a sh script around the C compiler goose would pick (goose toolchain, so GOOSE_CC counts). It
@@ -5693,14 +5726,19 @@ for a do
 done
 d=${src%/main.c}
 { printf '%s\n' "$@"; for a do case $a in @*) cat "${a#@}" ;; esac; done; } > "$d/gweb-key.new" 2>/dev/null
+# The binaries are hard links where they can be (never written in place), since macOS checks each new executable
+# file the first time it runs (about 0.3 s).
 if [ -n "$out" ] && [ -f "$d/gweb-bin" ] && cmp -s "$d/gweb-key.new" "$d/gweb-key" && cmp -s "$src" "$d/gweb-c" &&
-   cp "$d/gweb-bin" "$out"; then
+   { ln -f "$d/gweb-bin" "$out" 2>/dev/null || cp "$d/gweb-bin" "$out"; }; then
   [ -z "$GWEB_CC_MARK" ] || : > "$GWEB_CC_MARK"
   exit 0
 fi
 rm -f "$d/gweb-key"
-"$cc" "$@" || exit
-[ -z "$out" ] || { cp "$src" "$d/gweb-c" && cp "$out" "$d/gweb-bin" && mv "$d/gweb-key.new" "$d/gweb-key"; }
+[ -z "$out" ] || rm -f "$out"
+# gweb's split compile (in parallel, unchanged units from the cache); the whole file at once when it cannot.
+if [ -z "$GWEB_DEVCC" ] || ! "$GWEB_DEVCC" __devcc "$cc" "$@"; then "$cc" "$@" || exit; fi
+[ -z "$out" ] || { cp "$src" "$d/gweb-c" && rm -f "$d/gweb-bin" && { ln "$out" "$d/gweb-bin" 2>/dev/null || cp "$out" "$d/gweb-bin"; } &&
+  mv "$d/gweb-key.new" "$d/gweb-key"; }
 exit 0
 
 """;
@@ -5750,13 +5788,97 @@ fn dev_cc() -> const u8[:] {
     return dev_cc_path;
 }
 
+// gweb __devcc CC ARGS...: the dev compiler's compile of the program's C (cli/devcc.c), in GWEB_DEV_UNITS units
+// (default: four per hardware thread, so an edit recompiles small units; 0 or 1 compiles the C whole). Exit 0 when the
+// binary is linked; otherwise the dev compiler compiles the C whole.
+fn devcc_cmd(rest: u8[:][:]) {
+    if rest.len < 2 { exit(2); }
+    var units = 4 * hardware_threads();
+    var v: u8[>..] = [];
+    if env("GWEB_DEV_UNITS", v) && trim(v).len > 0 {
+        let n, ok = parse_int(trim(v));
+        if !ok { exit(2); }
+        units = n;
+    }
+    if units < 2 { exit(2); }
+    var al: u8[>..] = [];
+    for x in rest[1..] {
+        if find(x, "\n") >= 0 { exit(2); }
+        al.append(x);
+        al.push('\n');
+    }
+    var times: u8[>..] = [];
+    env("GWEB_CC_TIMES", times);
+    exit(c_devcc(rest[0], al, units, times));
+}
+
+// A shell command that makes `to` a hard link of `from` (a copy where it cannot be), replacing `to` rather than
+// writing into it: dev binaries share files, as macOS checks each new executable file the first time it runs.
+fn link_or_copy(cmd: u8[>..]&, from: const u8[:], to: const u8[:]) {
+    cmd.append("ln -f ");
+    shq(cmd, from);
+    cmd.push(' ');
+    shq(cmd, to);
+    cmd.append(" 2>/dev/null || { rm -f ");
+    shq(cmd, to);
+    cmd.append(" && cp -p ");
+    shq(cmd, from);
+    cmd.push(' ');
+    shq(cmd, to);
+    cmd.append("; }");
+}
+
+fn secs(out: u8[>..]&, t: f64) { format(out, ((t * 100.0) as i64) as f64 / 100.0); }
+
+// "; hooks 0.2, gen 0.1, goose 1.4, cc 1.2 (3 of 11 units), link 0.1" for a dev build's line. The C compile's own
+// steps come from gweb __devcc's file; without it (a whole-file compile, or none) goose's step includes the C.
+fn dev_times(msg: u8[>..]&, hooks: f64, gen_t: f64, goose_t: f64, file: const u8[:]) {
+    msg.append(": ");
+    if hooks >= 0.05 { msg.append("hooks "); secs(msg, hooks); msg.append(", "); }
+    msg.append("gen ");
+    secs(msg, gen_t);
+    var t: u8[>..] = [];
+    var split_t = 0.0;
+    var cc = 0.0;
+    var link = 0.0;
+    var units: u8[>..] = [];
+    var have = false;
+    if read_file(file, t) {
+        for line in split(t, '\n') {
+            let sp = find(line, " ");
+            if sp < 0 { continue; }
+            let k = line[..sp];
+            let ms, ok = parse_int(trim(line[sp + 1..]));
+            let v = if ok { ms as f64 / 1000.0 } else { 0.0 };
+            if k == "split" { split_t = v; have = true; }
+            else if k == "compile" { cc = v; }
+            else if k == "link" { link = v; }
+            else if k == "units" {
+                let w = split(line[sp + 1..], ' ');
+                if w.len == 2 { format(units, " (", w[0], " of ", w[1], " units)"); }
+            }
+        }
+    }
+    msg.append(", goose ");
+    secs(msg, if have { max(goose_t - split_t - cc - link, 0.0) } else { goose_t });
+    if have {
+        msg.append(", cc ");
+        secs(msg, split_t + cc);
+        msg.append(units);
+        msg.append(", link ");
+        secs(msg, link);
+    }
+}
+
 fn build(debug: bool, dev: bool) -> bool {
     let t0 = clock();
     last_errors.clear();
     last_warnings.clear();
     warnings = 0;
     if !run_hooks() { return false; }
+    let t_hooks = clock();
     if !gen(dev, BUILD_DIR) { return false; }
+    let t_gen = clock();
     var cwd: u8[>..] = [];
     c_cwd(cwd);
     var bin: u8[>..] = [];
@@ -5766,10 +5888,7 @@ fn build(debug: bool, dev: bool) -> bool {
     let fp: u64 = if dev { build_fp() } else { 0 };
     if dev && static_only && !hooks_ran && component_errors == 0 && fp == dev_fp && file_exists(DEV_SERVER) {
         var cp: u8[>..] = [];
-        cp.append("cp -p ");
-        shq(cp, DEV_SERVER);
-        cp.push(' ');
-        shq(cp, bin);
+        link_or_copy(cp, DEV_SERVER, bin);
         var o: u8[>..] = [];
         if c_run(cp, o) == 0 {
             var msg: u8[>..] = [];
@@ -5781,10 +5900,17 @@ fn build(debug: bool, dev: bool) -> bool {
     var cmd: u8[>..] = [];
     var mark: u8[>..] = [];
     format(mark, cwd, "/", BUILD_DIR, "/", DEV_MARK);
+    var times: u8[>..] = [];
+    format(times, cwd, "/", BUILD_DIR, "/", DEV_TIMES);
     if dev {
-        // The fastest correct C (docs/dev-builds.md): goose -O0, and the C at -O0 through the dev compiler.
+        // The fastest correct C (docs/dev-builds.md): goose -O0, and the C at -O0 through the dev compiler, which
+        // calls this binary back to compile it in parallel units.
         cmd.append("GWEB_CC_MARK=");
         shq(cmd, mark);
+        cmd.append(" GWEB_CC_TIMES=");
+        shq(cmd, times);
+        cmd.append(" GWEB_DEVCC=");
+        shq(cmd, self_bin);
         cmd.push(' ');
     }
     goose_cmd(cmd);
@@ -5802,7 +5928,9 @@ fn build(debug: bool, dev: bool) -> bool {
     format(main_path, cwd, "/", BUILD_DIR, "/main.goose");
     shq(cmd, main_path);
     var out: u8[>..] = [];
+    let t_goose0 = clock();
     let status = c_run(cmd, out);
+    let t_goose1 = clock();
     let mapped = rewrite_errors(out, cwd);
     let shown = if raw_errors { copy(mapped) } else { condense_errors(mapped, true) };
     if status != 0 {
@@ -5825,15 +5953,13 @@ fn build(debug: bool, dev: bool) -> bool {
     format(msg, "gweb: built .gweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
            ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s");
     if dev && file_exists(mark) { msg.append("; the C was unchanged, so its compile was skipped"); }
+    if dev { dev_times(msg, t_hooks - t0, t_gen - t_hooks, t_goose1 - t_goose0, times); }
     msg.push(')');
     if dev {
         // Kept for the next change under public/; gen empties .gweb/.
         make_dir(".gweb.dev");
         var cp: u8[>..] = [];
-        cp.append("cp -p ");
-        shq(cp, bin);
-        cp.push(' ');
-        shq(cp, DEV_SERVER);
+        link_or_copy(cp, bin, DEV_SERVER);
         var o: u8[>..] = [];
         dev_fp = if c_run(cp, o) == 0 { fp } else { 0 };
     }
@@ -6546,7 +6672,7 @@ fn dev(extra: u8[:][:]) {
     if pkgs.len > 0 || hooks.len > 0 || hooks_ran { code = code_stamp(); pub = public_stamp(); }
     var ok_code: i64 = if first_ok { code } else { -1 };   // code_stamp() at the last build that passed
     loop {
-        sleep_ms(250);
+        sleep_ms(100);
         if pid > 0 && c_wait(pid, 0) != -2 {
             write_stderr("gweb dev: the server exited; it starts again on the next change\n");
             pid = -1;
@@ -6830,7 +6956,7 @@ let DOCKERIGNORE = embed_file("../deploy/dockerignore");
 let SELF_FILES = [
     "VERSION", "cli/gweb.goose", "cli/component.goose", "cli/html.goose", "cli/i18n.goose", "cli/image.goose",
     "cli/pins.goose", "cli/structs.goose", "cli/tscan.goose", "cli/views.goose", "cli/proc.c", "cli/gzip.c",
-    "cli/gzip_core.c", "cli/gzip_core.h", "cli/gweb.build", "editor/lsp/server.mjs", "deploy/Dockerfile",
+    "cli/gzip_core.c", "cli/gzip_core.h", "cli/devcc.c", "cli/gweb.build", "editor/lsp/server.mjs", "deploy/Dockerfile",
     "deploy/dockerignore",
     "client/gwi.js", "client/gwi.min.js", "client/gwf.js", "client/gwf.min.js", "client/gwh.js", "client/gwh.min.js",
     "client/gwl.js", "client/gwl.min.js", "client/gwm.js", "client/gwm.min.js", "client/gwc.js", "client/gwc.min.js",
@@ -6841,7 +6967,7 @@ let SELF_DATA = [
     EMBEDDED_VERSION, embed_file("gweb.goose"), embed_file("component.goose"), embed_file("html.goose"),
     embed_file("i18n.goose"), embed_file("image.goose"), embed_file("pins.goose"), embed_file("structs.goose"),
     embed_file("tscan.goose"), embed_file("views.goose"), embed_file("proc.c"), embed_file("gzip.c"),
-    embed_file("gzip_core.c"), embed_file("gzip_core.h"), embed_file("gweb.build"), LSP_JS, DOCKERFILE,
+    embed_file("gzip_core.c"), embed_file("gzip_core.h"), embed_file("devcc.c"), embed_file("gweb.build"), LSP_JS, DOCKERFILE,
     DOCKERIGNORE,
     RT_PRETTY, RT_MIN, RT_FRAG_PRETTY, RT_FRAG_MIN, RT_HTTP_PRETTY, RT_HTTP_MIN,
     RT_LIFE_PRETTY, RT_LIFE_MIN, RT_MODS_PRETTY, RT_MODS_MIN, RT_CHILD_PRETTY, RT_CHILD_MIN,
@@ -7009,6 +7135,7 @@ fn main() {
     if i >= a.len { usage(); }
     let cmd = a[i];
     let rest = a[i + 1..];
+    if cmd == "__devcc" { devcc_cmd(rest); return; }
     self_bin = self_path(a[0]);
     if cmd == "semver-cmp" { semver_cmd(rest); return; }
     if cmd == "update" { update_cmd(rest); return; }
