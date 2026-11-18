@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.6.0
 
 Additions and fixes for goose-cms (`NOTES-FOR-GWEB.md`). Proposal for a package's jobs (ask 11): `docs/PROPOSAL-PACKAGE-JOBS.md`.
 
