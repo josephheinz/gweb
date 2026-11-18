@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New: `gweb::stream_file(s, root, rel) -> i64` writes a file into a stream in 256 KiB windows and `gweb::file_size(root, rel) -> i64` reads its size, with `send_file`'s path rules, so a download built while it is sent (a backup tar of a snapshot and its media) needs no temp file. goose-cms ask 13. Test: `test/cmsready.sh`.
 - Fix: a view's `i64` field is drawn by a call with no `i64` past the sixth parameter (its labels travel in a struct), for the x86-64 Linux Goose issue with such parameters. The foreign-type `gw_field(out, name, v, label, help, editor, errs)` is unchanged: its seven parameters are references and slices, which that issue does not touch. goose-cms ask 8.
 - New: route tests can set the client address and test uploads. `t.client_ip` is what `gweb::client_ip` reports (so a per-address rate limit has its own bucket per test address), and `t.trust_proxy = true` reads `X-Forwarded-For` as behind a proxy. `site::post_multipart(t, target, parts)` with `gweb::multipart_field` and `gweb::multipart_file` sends multipart bodies; files go to `t.upload_dir` (`.gweb.test/uploads`) with the server's limits, and an unsaved one is deleted after the reply. Was: a multipart route answered 500 and every request shared one rate-limit bucket. goose-cms asks 5 and 9. Test: `test/routes.sh`.
 - New: `gweb::expect_eq(t, got, want, what)` for text and `i64`, which prints both values on failure. goose-cms ask 15. Test: `test/routes.sh`.

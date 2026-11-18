@@ -295,6 +295,11 @@ req bg6 HEAD a.test /media/m1/big.bin -H 'Connection: keep-alive'
 check "$([ "$(status bg6)" = 200 ] && [ "$(header bg6 content-length)" = 3145728 ] && echo ok)" "the big file: a second HEAD answers too"
 req am GET a.test /media/m1/up.txt
 check "$([ "$(status am)" = 200 ] && echo ok)" "the server still answers after the streamed and refused requests"
+# A download the handler builds (1.6): gweb::file_size and gweb::stream_file through gweb::stream_begin.
+req bd GET a.test /bundle
+check "$([ "$(status bd)" = 200 ] && has_header bd 'transfer-encoding: chunked' && [ "$(wc -c < "$WORK/bd.b" | tr -d ' ')" = 3145794 ] && echo ok)" "/bundle streams both files and their lines: $(wc -c < "$WORK/bd.b") bytes"
+check "$([ "$(head -c 48 "$WORK/bd.b")" = "m1/up.txt 16
+hello media filem1/big.bin 3145728" ] && [ "$(tail -n 1 "$WORK/bd.b")" = "m1/missing.txt -1" ] && echo ok)" "/bundle: a line, the file's bytes; a missing file has size -1"
 
 # 2i. Logout, then the guard again.
 # 2i. Four workers: every worker drops its cache at the epoch, and every reader sees the committed write.

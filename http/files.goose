@@ -281,3 +281,41 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
     stream_end(ctx, s);
     return true;
 }
+
+// ---------------------------------------------------------------- a body the handler builds (1.6)
+
+// The size of root/rel, or -1 when rel is unsafe (file_path_ok), names no regular file, or resolves outside root.
+// A tar or zip header needs it before the bytes.
+fn file_size(root: const u8[:], rel: const u8[:]) -> i64 {
+    if !file_path_ok(rel) { return -1; }
+    var size: i64 = 0;
+    var mtime: i64 = 0;
+    let fd = c_file_open_in(root, rel, size, mtime);
+    if fd < 0 { return -1; }
+    c_file_close(fd);
+    return size;
+}
+
+// Writes the bytes of root/rel to a stream from gweb::stream_begin, a window at a time, so a download the handler
+// builds (a tar of a snapshot and its media) needs no temp file and no whole file in memory. Returns the bytes
+// written: the file's size, or -1 when rel is refused as file_size refuses it, the file cannot be read, or the
+// stream failed (then the reply is cut, and the handler should return).
+fn stream_file(s: Stream&, root: const u8[:], rel: const u8[:]) -> i64 {
+    if !file_path_ok(rel) || !s.ok { return -1; }
+    var size: i64 = 0;
+    var mtime: i64 = 0;
+    let fd = c_file_open_in(root, rel, size, mtime);
+    if fd < 0 { return -1; }
+    var off = 0;
+    var chunk: u8[>..] = [];
+    while off < size {
+        chunk.clear();
+        let n = c_file_pread(fd, off, min(FILE_WINDOW, size - off), chunk);
+        if n <= 0 { break; }
+        off += n;
+        if !stream_write(s, chunk) { break; }
+    }
+    c_file_close(fd);
+    if off != size || !s.ok { return -1; }
+    return size;
+}

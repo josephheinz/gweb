@@ -1295,6 +1295,20 @@ a plain 404.
   connection, so every file is read whole.
 - HEAD sends the head of a GET, with the `Content-Length` the body would have. A HEAD for a streamed file reads nothing.
 - There are no range requests and no compression.
+- `send_file` streams within the call, so the caller may delete the file once it returns.
+
+A download the handler builds, such as a tar of a backup and its media, needs no temp file (1.6): start a stream,
+write each header, and `gweb::stream_file(s, root, rel) -> i64` copies a file's bytes in 256 KiB windows (its size, or
+-1 when `rel` is refused as above, the file is missing, or the stream failed). `gweb::file_size(root, rel) -> i64`
+gives the size first, or -1. Set `Content-Disposition` on `res` before `stream_begin`.
+
+```goose
+http::set_header(res, "Content-Disposition", "attachment; filename=\"backup.tar\"");
+var s = gweb::stream_begin(req, ctx, res);
+if !s.ok { return; }
+for rel in files { write_tar_header(s, rel, gweb::file_size(root, rel)); if gweb::stream_file(s, root, rel) < 0 { return; } }
+gweb::stream_end(ctx, s);
+```
 
 ## Server push and WebSockets
 
