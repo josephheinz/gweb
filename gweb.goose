@@ -441,6 +441,57 @@ fn html(res: http::Response&, status: http::Status) {
 
 fn json(res: http::Response&, status: http::Status) { http::json_reply(res, status); }
 
+// Sets the reply's Content-Type, replacing the one there (1.8). False, with res unchanged, when it is empty, holds a
+// control byte, or is over 128 bytes.
+fn set_content_type(res: http::Response&, content_type: const u8[:]) -> bool {
+    if content_type.len == 0 || content_type.len > res.content_type.cap { return false; }
+    for c in content_type { if c < ' ' || c == 127 { return false; } }
+    res.content_type.clear();
+    res.content_type.append(content_type);
+    return true;
+}
+
+// A whole reply of another type: RSS or XML (`application/rss+xml; charset=utf-8`), CSV (`text/csv; charset=utf-8`),
+// plain data. Replaces the body, as `http::text` does not (1.8). False when the type is refused (see set_content_type).
+fn reply(res: http::Response&, status: http::Status, content_type: const u8[:], body: const u8[:]) -> bool {
+    if !set_content_type(res, content_type) { return false; }
+    res.status = status;
+    res.body.clear();
+    res.body.append(body);
+    return true;
+}
+
+// A `Content-Type:` line in res.headers (set with `http::set_header`, which only appends) moves to res.content_type,
+// the last one winning, so the reply has one (1.8). Called once per reply, after the handler.
+fn _fold_content_type(res: http::Response&) {
+    var has = false;
+    var k = 0;
+    while k + 13 <= res.headers.len {
+        if (k == 0 || res.headers[k - 1] == '\n') && http::eq_nocase(res.headers[k..k + 13], "content-type:") { has = true; break; }
+        k += 1;
+    }
+    if !has { return; }
+    var rest: u8[>..] = [];
+    var ct: u8[>..] = [];
+    var i = 0;
+    while i < res.headers.len {
+        var j = i;
+        while j < res.headers.len && res.headers[j] != '\n' { j += 1; }
+        let line = res.headers[i..min(j + 1, res.headers.len)];
+        i = j + 1;
+        if line.len >= 13 && http::eq_nocase(line[..13], "content-type:") {
+            ct.clear();
+            ct.append(trim(line[13..]));
+        } else {
+            rest.append(line);
+        }
+    }
+    if ct.len == 0 { return; }
+    if !set_content_type(res, ct) { return; }
+    res.headers.clear();
+    res.headers.append(rest);
+}
+
 fn not_found(ctx: Ctx&) { ctx.outcome = Outcome.NotFound; }
 
 // A page handler that took `res` and wrote the whole reply (status, headers, body) calls this and returns: the
@@ -1145,6 +1196,7 @@ fn _respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Co
         return -1, false;
     }
     var static_index = D(req, ctx, res);
+    _fold_content_type(res);
     if !_csrf_end(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
     if !_apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
     if !ctx.streamed && !_apply_security(ctx, res, cfg) { static_index = -1; ctx.detach = Detach.None; }

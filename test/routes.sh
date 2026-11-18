@@ -4,7 +4,7 @@
 #   GOOSE=/path/to/goose test/routes.sh
 #
 # 1. test/routes/site passes under gweb test and prints its test count; t.client_ip, t.trust_proxy and uploads (1.6);
-#    a CSRF token started only when the reply shows it (1.7).
+#    a CSRF token started only when the reply shows it (1.7); one Content-Type, whichever way a handler sets it (1.8).
 # 2. The owner state is shared: the later counter tests see the earlier POSTs.
 # 3. test/routes/failing exits 1 and names its failing test.
 # 4. A type error in a test file is reported at tests/<name>.goose:LINE, and a bad file name is refused.
@@ -27,10 +27,10 @@ show() { echo "$1" | sed 's/^/    /'; }
 # 1 and 2. The site.
 cp -R "$HERE/routes/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then
-  case "$out" in *"routes: 15 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 15 tests ... 0 failed':"; show "$out" ;; esac
+  case "$out" in *"routes: 17 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 17 tests ... 0 failed':"; show "$out" ;; esac
   for name in t_basic::test_page t_basic::test_route_json t_basic::test_static_file t_basic::test_post_form t_basic::test_counter_second \
               t_basic::test_counter_third t_client::test_client_ip t_client::test_rate_limit_per_address t_client::test_trust_proxy t_client::test_upload t_client::test_header_from_load t_client::test_public_file \
-              t_csrf::test_no_form_no_cookie t_csrf::test_form_starts_token t_csrf::test_post_checked_without_form; do
+              t_csrf::test_no_form_no_cookie t_csrf::test_form_starts_token t_csrf::test_post_checked_without_form t_typed::test_set_header_content_type t_typed::test_reply_helper; do
     case "$out" in *"ok $name"*) ok ;; *) bad "no 'ok $name' line:"; show "$out" ;; esac
   done
   # 1.6: an upload's file is deleted after the reply.
