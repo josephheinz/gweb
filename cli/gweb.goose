@@ -4443,6 +4443,8 @@ fn gen_site_fns(m: u8[>..]&) {
         format(m, "fn site::", SITE_BODY[i], "(t: gweb::Tester&, target: const u8[:], body: const u8[:]) -> http::Response {\n");
         format(m, "    return gweb::_test_send(t, \"", SITE_BODY_METHOD[i], "\", target, body, \"", SITE_BODY_TYPE[i], "\", dispatch, static_bytes);\n}\n");
     }
+    m.append("fn site::post_multipart(t: gweb::Tester&, target: const u8[:], parts: const u8[:]) -> http::Response {\n");
+    m.append("    return gweb::_test_multipart(t, target, parts, dispatch, static_bytes);\n}\n");
     m.append("fn site::request(t: gweb::Tester&, method: const u8[:], target: const u8[:], body: const u8[:], content_type: const u8[:]) -> http::Response {\n");
     m.append("    return gweb::_test_send(t, method, target, body, content_type, dispatch, static_bytes);\n}\n");
 }

@@ -1369,9 +1369,15 @@ fn test_add(t: gweb::Tester&) {
 ```
 
 - `site::get`, `head`, `delete(t, target)`; `post_form`, `post_json`, `put_json`, `patch_json(t, target, body)`;
-  `site::request(t, method, target, body, content_type)`. Each returns an `http::Response`.
+  `site::post_multipart(t, target, parts)` (1.6); `site::request(t, method, target, body, content_type)`. Each returns an `http::Response`.
 - `gweb::expect(t, ok, what)`, `expect_status`, `expect_contains(t, text, needle)`, `expect_header(t, res, name, value)`, which take the response as `const&`, so bind it first (`let res = site::get(...)`);
+  `gweb::expect_eq(t, got, want, what)` (1.6) compares text or `i64` and prints `what: got 'a', want 'b'`;
   `gweb::header_of(res, name)` and `gweb::form_field(out, name, value)` help build and read messages.
+- Uploads (1.6): `gweb::multipart_field(parts, name, value)` and `gweb::multipart_file(parts, name, filename, content_type, data)`
+  build the body of `site::post_multipart`. Files go to `t.upload_dir` (`.gweb.test/uploads`, emptied by each run) with the
+  server's default limits, so `form_upload`, `check_upload` and `save_upload` work; an unsaved file is deleted after the reply.
+- The client address (1.6): `t.client_ip` is what `gweb::client_ip` reports (`""` by default, as before), so per-address
+  rate limits can be tested. `t.trust_proxy = true` is `GWEB_TRUST_PROXY`: an `X-Forwarded-For` in `t.headers` is then the client.
 - The jar `t.cookies` keeps `Set-Cookie` values and sends them on the next request. With `t.auto_csrf` (the default) a
   non-GET request sends the jar's `gw_csrf` as `X-CSRF-Token`, adding a fixed token when there is none. Set
   `t.auto_csrf = false` to test a refusal. `t.headers` holds extra header lines for the next request only.
@@ -1379,8 +1385,8 @@ fn test_add(t: gweb::Tester&) {
 - `state::ask` calls `state::handle` directly on `main`.
 
 Rules for authors:
-- Tests run in file order, then in source order. They share `state`, the database and the jar unless a test
-  resets `t.cookies`.
+- Tests run in file order, then in source order. They share `state`, the database and one `Tester`: the jar, `t.host`,
+  `t.client_ip` and `t.trust_proxy` keep what an earlier test set.
 - Point the app's database at a test file through its environment variable.
 - A test that aborts ends the run; the `== <test>` line before it names the test.
 - Tests are not part of the server: `gweb build` ignores `tests/`.

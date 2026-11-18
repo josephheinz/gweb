@@ -3,7 +3,7 @@
 #
 #   GOOSE=/path/to/goose test/routes.sh
 #
-# 1. test/routes/site passes under gweb test and prints its test count.
+# 1. test/routes/site passes under gweb test and prints its test count; t.client_ip, t.trust_proxy and uploads (1.6).
 # 2. The owner state is shared: the later counter tests see the earlier POSTs.
 # 3. test/routes/failing exits 1 and names its failing test.
 # 4. A type error in a test file is reported at tests/<name>.goose:LINE, and a bad file name is refused.
@@ -26,10 +26,13 @@ show() { echo "$1" | sed 's/^/    /'; }
 # 1 and 2. The site.
 cp -R "$HERE/routes/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then
-  case "$out" in *"routes: 6 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 6 tests ... 0 failed':"; show "$out" ;; esac
-  for name in test_page test_route_json test_static_file test_post_form test_counter_second test_counter_third; do
-    case "$out" in *"ok t_basic::$name"*) ok ;; *) bad "no 'ok t_basic::$name' line:"; show "$out" ;; esac
+  case "$out" in *"routes: 10 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 10 tests ... 0 failed':"; show "$out" ;; esac
+  for name in t_basic::test_page t_basic::test_route_json t_basic::test_static_file t_basic::test_post_form t_basic::test_counter_second \
+              t_basic::test_counter_third t_client::test_client_ip t_client::test_rate_limit_per_address t_client::test_trust_proxy t_client::test_upload; do
+    case "$out" in *"ok $name"*) ok ;; *) bad "no 'ok $name' line:"; show "$out" ;; esac
   done
+  # 1.6: an upload's file is deleted after the reply.
+  check "$([ -d "$WORK/ok/.gweb.test/uploads" ] && [ -z "$(ls -A "$WORK/ok/.gweb.test/uploads")" ] && echo ok)" "the test upload folder is empty after the run"
 else
   bad "gweb test of the site failed:"; show "$out"
 fi
@@ -40,7 +43,8 @@ if out=$("$GWEB" -C "$WORK/failing" test 2>&1); then
   bad "gweb test of the failing site succeeded"
 else
   case "$out" in *"FAIL t_bad::test_x"*) ok ;; *) bad "no 'FAIL t_bad::test_x' line:"; show "$out" ;; esac
-  case "$out" in *"routes: 1 tests, "*" 1 failed"*) ok ;; *) bad "no 'routes: 1 tests ... 1 failed' line:"; show "$out" ;; esac
+  case "$out" in *"FAIL t_bad::test_x: the title: got 'abc', want 'abd'"*) ok ;; *) bad "no expect_eq failure line:"; show "$out" ;; esac
+  case "$out" in *"routes: 1 tests, 3 checks, 2 failed"*) ok ;; *) bad "no 'routes: 1 tests, 3 checks, 2 failed' line:"; show "$out" ;; esac
 fi
 
 # 4. Build errors.

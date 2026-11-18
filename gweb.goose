@@ -79,7 +79,8 @@ struct Ctx {
     start_us: i64 = 0,            // monotonic; 0 when nothing needed the time
     job_id: i64 = 0,              // set in a job runner's ctx
     attempt: i64 = 0,
-    too_large: i64 = 0            // the body limit the request is over (--max-upload, --max-body or MAX_UPLOAD); 0 = within it
+    too_large: i64 = 0,           // the body limit the request is over (--max-upload, --max-body or MAX_UPLOAD); 0 = within it
+    _peer: u8[..64] = ""          // a route test's Tester.client_ip: the client address when there is no connection
 }
 
 // A file of a multipart post (gweb::upload). Lives here because Ctx holds it.

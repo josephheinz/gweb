@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New: route tests can set the client address and test uploads. `t.client_ip` is what `gweb::client_ip` reports (so a per-address rate limit has its own bucket per test address), and `t.trust_proxy = true` reads `X-Forwarded-For` as behind a proxy. `site::post_multipart(t, target, parts)` with `gweb::multipart_field` and `gweb::multipart_file` sends multipart bodies; files go to `t.upload_dir` (`.gweb.test/uploads`) with the server's limits, and an unsaved one is deleted after the reply. Was: a multipart route answered 500 and every request shared one rate-limit bucket. goose-cms asks 5 and 9. Test: `test/routes.sh`.
+- New: `gweb::expect_eq(t, got, want, what)` for text and `i64`, which prints both values on failure. goose-cms ask 15. Test: `test/routes.sh`.
 - New: in a mounted package's templates, views and components, `@asset("/x.js")` is the package's own `public/x.js` at its mount (`/admin/x.HASH.js`), so a package need not spell where it is mounted. Without such a file the URL is the one written, so `@asset("/admin/x.js")` keeps working. goose-cms ask 4. Test: `test/packages.sh`.
 - Fix: a package's `app/` or `lib/` that mentions `gweb::subscribe(` or `gweb::websocket(` starts the push hub, as the app's do; its event stream answered 503. goose-cms ask 3. Test: `test/packages.sh`.
 - Fix: a view with an empty `struct Props { }` builds: its `read`, `write`, `defaults`, `form` and `parse` are generated (they called a `gw_read_Props` that was not). goose-cms ask 1. Test: `test/views.sh`.

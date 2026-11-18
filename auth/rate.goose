@@ -40,7 +40,7 @@ fn client_ip(req: const http::Request&, ctx: const Ctx&, out: u8[>..]&) {
             if item.len > 0 { out.append(item); return; }
         }
     }
-    if ctx.conn_fd < 0 { return; }
+    if ctx.conn_fd < 0 { out.append(ctx._peer); return; }
     let peer = net::peer_address(net::Socket { fd: ctx.conn_fd });
     _strip_port(peer, out);
 }

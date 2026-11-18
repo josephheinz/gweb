@@ -11,10 +11,39 @@ let TEST_CSRF = "00000000000000000000000000000000";
 let FORM_HEX = "0123456789ABCDEF";
 
 // headers: extra lines for the next request only. cookies: the jar, "name=value; name=value". host: the Host header of
-// every request ("test"), for an app that serves several hosts.
+// every request ("test"), for an app that serves several hosts. client_ip: the peer address gweb::client_ip reports
+// ("": none, as before 1.6). trust_proxy: as GWEB_TRUST_PROXY, so an X-Forwarded-For in headers is the client.
+// upload_dir: where a multipart request's files go (1.6), emptied by each gweb test run.
 struct Tester { failures: i64 = 0, checks: i64 = 0, name: u8[..128] = "",
                 auto_csrf: bool = true, headers: u8[..2048] = "",
-                cookies: u8[..4096] = "", host: u8[..128] = "test" }
+                cookies: u8[..4096] = "", host: u8[..128] = "test",
+                client_ip: u8[..64] = "", trust_proxy: bool = false, upload_dir: u8[..256] = ".gweb.test/uploads" }
+
+// The boundary of gweb::multipart_field and multipart_file, which site::post_multipart closes.
+let TEST_BOUNDARY = "gweb-test-boundary-7d1f";
+
+// Appends a text part to a multipart body for site::post_multipart.
+fn multipart_field(out: u8[>..]&, name: const u8[:], value: const u8[:]) {
+    format(out, "--", TEST_BOUNDARY, "\r\nContent-Disposition: form-data; name=\"", name, "\"\r\n\r\n", value, "\r\n");
+}
+
+// Appends a file part to a multipart body for site::post_multipart.
+fn multipart_file(out: u8[>..]&, name: const u8[:], filename: const u8[:], content_type: const u8[:], data: const u8[:]) {
+    format(out, "--", TEST_BOUNDARY, "\r\nContent-Disposition: form-data; name=\"", name, "\"; filename=\"", filename, "\"\r\n");
+    format(out, "Content-Type: ", content_type, "\r\n\r\n");
+    out.append(data);
+    out.append("\r\n");
+}
+
+// Sends parts (multipart_field, multipart_file) as multipart/form-data; called by the generated site::post_multipart.
+fn _test_multipart<D, S>(t: Tester&, target: const u8[:], parts: const u8[:]) -> http::Response {
+    var body: u8[>..] = [];
+    body.append(parts);
+    format(body, "--", TEST_BOUNDARY, "--\r\n");
+    var ct: u8[>..] = [];
+    format(ct, "multipart/form-data; boundary=", TEST_BOUNDARY);
+    return _test_send(t, "POST", target, body, ct, D, S);
+}
 
 // The value of a jar cookie; "" when absent.
 fn _jar_get(t: const Tester&, name: const u8[:]) -> const u8[:], bool {
@@ -113,15 +142,23 @@ fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: 
     }
     var cfg = _default_config();
     cfg.workers = 1;
+    cfg.auth.trust_proxy = t.trust_proxy;
     var key_err: u8[>..] = [];
     if !_dev_secret(cfg.auth.keys, key_err) { expect(t, false, key_err); }   // sessions work in tests, as in gweb dev
     var ctx = _new_ctx(0, -1);
+    ctx._peer.append(t.client_ip);
+    // As run_worker: uploads go to t.upload_dir, with the server's limits, and the unsaved ones are deleted after the reply.
+    if _is_multipart(req) && t.upload_dir.len > 0 && c_up_mkdir(t.upload_dir) != 0 { ctx.upload_dir.append(t.upload_dir); }
+    ctx.upload_parts = cfg.upload_parts;
+    ctx.upload_files = min(cfg.upload_files, ctx.uploads.cap);
+    ctx.upload_text = cfg.upload_text;
     // As run_worker: a body over --max-upload (multipart) or --max-body reaches the app as ctx.too_large.
     let limit = if _is_multipart(req) { cfg.max_upload } else { cfg.max_body };
     if body.len > limit { ctx.too_large = limit; }
     let static_index, dev = _respond(req, ctx, -1, cfg, res, D);
     if static_index >= 0 { res.body.append(S(static_index)); }
     if req.method == http::Method.Head { res.body.clear(); }
+    for i in ctx.uploads.len { if ctx.uploads[i].path.len > 0 { c_up_unlink(ctx.uploads[i].path); } }
     _jar_update(t, res.headers);
     return res;
 }
@@ -132,6 +169,20 @@ fn expect(t: Tester&, ok: bool, what: const u8[:]) {
         t.failures += 1;
         print("FAIL ", t.name, ": ", what);
     }
+}
+
+// Text equality that shows both values on failure: "what: got 'a', want 'b'" (1.6).
+fn expect_eq(t: Tester&, got: const u8[:], want: const u8[:], what: const u8[:]) {
+    var msg: u8[>..] = [];
+    format(msg, what, ": got '", got, "', want '", want, "'");
+    expect(t, got == want, msg);
+}
+
+// Number equality, as expect_eq for text.
+fn expect_eq(t: Tester&, got: i64, want: i64, what: const u8[:]) {
+    var msg: u8[>..] = [];
+    format(msg, what, ": got ", got, ", want ", want);
+    expect(t, got == want, msg);
 }
 
 fn expect_status(t: Tester&, res: const http::Response&, code: i64) {
