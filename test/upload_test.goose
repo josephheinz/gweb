@@ -196,6 +196,28 @@ fn main() {
         check(!gweb::save_upload(ctx.uploads[1], dest), "save refuses an existing dest");
         check(file_bytes(dest, got) && got == png, "existing dest untouched");
         check(file_bytes(ctx.uploads[1].path, got), "source kept after a refused save");
+        // a destination in folders that do not exist yet (1.8): a file of its own, so the checks below keep theirs
+        var own: u8[..160] = "";
+        format(own, DIR, "/own-", d, ".bin");
+        gweb::c_up_unlink(own);
+        let ofd = gweb::c_up_create(own);
+        gweb::c_up_write(ofd, "payload");
+        gweb::c_up_close(ofd);
+        var mine = gweb::Upload { field: "f", filename: "own.bin", content_type: "", size: 7, path: "" };
+        mine.path.append(own);
+        var deep: u8[..192] = "";
+        format(deep, DIR, "/deep-", d, "/a/b/c.bin");
+        check(gweb::save_upload(mine, deep), "save makes the missing folders");
+        check(file_bytes(deep, got) && got == "payload", "saved into new folders");
+        check(!gweb::mkdir_p(""), "mkdir_p of nothing");
+        let ofd2 = gweb::c_up_create(own);
+        gweb::c_up_write(ofd2, "again");
+        gweb::c_up_close(ofd2);
+        var inway: u8[..224] = "";
+        format(inway, deep, "/x/y.bin");
+        check(!gweb::save_upload(mine, inway), "a file in the way of a folder: false");
+        gweb::c_up_unlink(own);
+        gweb::c_up_unlink(deep);
         let saved_path = ctx.uploads[1].path;
         var saved_copy: u8[..256] = "";
         saved_copy.append(saved_path);

@@ -1038,7 +1038,7 @@ struct UploadForm { photo: gweb::Upload }
 
 ...  if !decode(req, ctx, p.form, p.errs) || !gweb::check_upload(p.errs, "photo", p.form.photo, 2000000, ["image/png", "image/jpeg"]) { ... }
 var name: u8[>..] = [];  gweb::safe_name(name, p.form.photo.filename);
-gweb::save_upload(p.form.photo, dest);            // false if dest exists; the file moves
+gweb::save_upload(p.form.photo, dest);            // false if dest exists or its folders cannot be made; the file moves
 ```
 
 - `--max-upload N` (`GWEB_MAX_UPLOAD`, default 32 MiB) caps a multipart body; `--max-body` still caps everything else.
@@ -1048,7 +1048,9 @@ gweb::save_upload(p.form.photo, dest);            // false if dest exists; the f
   (`--max-upload-text`); each has a `GWEB_*` variable. A malformed body is a 400, a file over the limit a 413.
 - A body over `--max-upload`, `--max-body` or `MAX_UPLOAD` is a 413 with a message that names the limit
   (`This file is too large. The limit is 32 MiB.`). A browser navigation or form post (`Accept` names `text/html`,
-  no `GW-Fragment`) gets the nearest `error.html`, or the built-in page; fetch and fragment requests get JSON. A body
+  no `GW-Fragment`), or any urlencoded or multipart form post without `Accept: application/json`, `GW-Fragment` or
+  `X-Requested-With` (curl's `*/*`, a script that sends none; 1.8), gets the nearest `error.html`, or the built-in
+  page; fetch and fragment requests, and a request that asks for JSON, get JSON. A body
   over `--max-upload` or `--max-body` is never read: the reply says `Connection: close`, and gweb reads and drops what
   the client still sends (up to 10 s) before closing, so the browser shows the reply instead of a reset.
 - To answer it yourself, define `fn too_large` beside `fn POST` in `page.goose` or `route.goose` (1.5). It runs
@@ -1068,7 +1070,13 @@ fn too_large(req: const http::Request&, ctx: gweb::Ctx&, limit: i64) {
 ```
 
   `gweb test` applies the same limits, so a test can post an oversized body.
-- Unsaved files are deleted after the response. Use `gweb::save_upload` to keep one.
+- Unsaved files are deleted after the response. Use `gweb::save_upload` to keep one. It makes the folders of `dest`
+  that are missing (`uploads/2026/11/a.png` needs no setup; `gweb::mkdir_p(dir) -> bool` does the same alone, 1.8) and
+  returns false when `dest` exists, a folder cannot be made, or the move fails.
+- Private storage: new folders are mode 0700 and saved files 0600, and the upload dir (`--upload-dir`) is not served.
+  Keep uploads outside `public/`, which serves every file in it, and send one through a handler that checks who may
+  read it (`gweb::send_file(req, ctx, res, root, rel, opts)` streams it and refuses a path outside `root`; it sends
+  `Cache-Control: public`, so replace that for a private file).
 - `filename` and `content_type` are what the client said. `check_upload` checks the sniffed type (PNG, JPEG,
   GIF, WebP, PDF; never SVG). Build the saved name with `gweb::safe_name`.
 - A `gw-target` form with `enctype="multipart/form-data"` is sent as `FormData`.

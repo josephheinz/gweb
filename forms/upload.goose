@@ -320,10 +320,22 @@ fn form_upload(ctx: const Ctx&, field: const u8[:], out: Upload&, errs: FieldErr
     return true;
 }
 
-// Moves the file to dest and never overwrites; false when dest exists or the move fails.
-// A link and unlink, or a copy where the two are on different file systems.
+// Makes dir and the folders above it that are missing, mode 0700 (readable by the server's user only); true when the
+// folder exists afterwards (1.8). A relative path is from the folder the server runs in.
+fn mkdir_p(dir: const u8[:]) -> bool {
+    if dir.len == 0 { return false; }
+    return c_up_mkdir(dir) != 0;
+}
+
+// Moves the file to dest and never overwrites; false when dest exists or the move fails. The folders of dest that
+// are missing are made first, mode 0700, so `uploads/2026/11/a.png` needs no setup (1.8); false when that fails
+// too (a file in the way, no permission). A link and unlink, or a copy where the two are on different file systems.
+// The file is mode 0600: a folder served to the web is the app's choice, never the default.
 fn save_upload(up: const Upload&, dest: const u8[:]) -> bool {
     if up.path.len == 0 || dest.len == 0 { return false; }
+    var cut = -1;
+    for i in dest.len { if dest[i] == '/' { cut = i; } }
+    if cut > 0 && !mkdir_p(dest[..cut]) { return false; }
     return c_up_save(up.path, dest) != 0;
 }
 
