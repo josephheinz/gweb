@@ -15,6 +15,18 @@
   - A dev build's line shows its steps: `gen 0.04, goose 1.6, cc 0.5 (1 of 63 units), link 0.06`.
   Test: `test/devbuild.sh`.
 
+From goose-cms reviews (`gweb-todo`): a mailer, feeds, and fixes.
+
+- New: a mailer, `import gweb.ops.mail;`: `gweb::mail_send(ctx, m)`, transports by `GWEB_MAIL` (`log` in dev and test, `smtp://host:port`, `off`), `t.mails` in route tests. Plain SMTP to a loopback or private relay only (goose-net has no TLS; use a local relay, `docs/DEPLOY.md`); another host exits the server with 2. Send from a job for retries (README "Mail"). Tests: `test/mail_test.goose`, `test/mail.sh`. Was `docs/PROPOSAL-MAILER.md`.
+- New: `gweb::Feed`: RSS 2.0 and Atom from one list (`import gweb.site.feed;`), `rfc822`, `rfc3339` and `xml_escape` public. Test: `test/routes.sh`.
+- Fix: `http::set_header(res, "Content-Type", ...)` replaces the type; it left `text/plain` and added a second line. New `gweb::reply(res, status, type, body)` and `gweb::set_content_type` for RSS, XML, CSV.
+- Change: `gweb::redirect` keeps a body and Content-Type the handler set on `res`; with none it sends neither, as before.
+- Fix: a form post (urlencoded or multipart) over its limit with no `Accept: text/html` (curl, a script) gets the HTML error page, not JSON; `Accept: application/json`, `GW-Fragment` and `X-Requested-With` still get JSON.
+- New: `save_upload` makes the missing folders of `dest` (mode 0700); `gweb::mkdir_p(dir)`. Docs: private upload storage.
+- New: compile errors hint common slips: `.length()`, `.push_back`, `.substr`, `.contains`, `string` or `int` as a type, `+` on text. `.length` on text already had its hint (1.6), in `build`, `check` and `test`.
+- Change: in `gweb test` a 4xx a handler answers is not logged as `gweb: error`. Docs: `http::code(res.status)`; an `expect_*` takes text temporaries, not a whole reply (goose binds no temporary to a `const&`).
+- Already in 1.6, so not redone: `#gw-dev-error` only on a 5xx or crash.
+
 ## v1.7.0
 
 From a blind developer review of a goose-cms site. Proposal for a mailer: `docs/PROPOSAL-MAILER.md`.

@@ -127,7 +127,7 @@ fn validate(p: const Props&, errs: gweb::FieldErrors&)
 
 Helpers: `gweb::param(ctx, "id")`, `gweb::param_int`, `gweb::query(req, "q", out)`,
 `gweb::html(res, status)`, `gweb::json(res, status)`, `gweb::not_found(ctx)`,
-`gweb::redirect(ctx, "/to", 302)`, and `state::ask(ctx, state::Msg.List) -> Reply, bool`.
+`gweb::redirect(ctx, "/to", 302)` (a body and Content-Type the handler wrote on `res` first are kept, 1.8), and `state::ask(ctx, state::Msg.List) -> Reply, bool`.
 Set `ctx.title` in `load`; layouts read it.
 
 `req.method` is an `http::Method`: `Get`, `Head`, `Post`, `Put`, `Patch`, `Delete`, `Options`, or `Other` for any
@@ -1381,6 +1381,34 @@ fn close(ctx: gweb::Ctx&, id: u64, topic: const u8[:]) { }
 - Authenticate in the route before calling `websocket` or `subscribe`; cookies and `ctx` work as in any
   route. A route is not CSRF-checked for GET.
 - Behind a proxy: see [docs/DEPLOY-PROXY.md](docs/DEPLOY-PROXY.md).
+
+## Feeds and replies of another type
+
+A feed is a `route.goose` (`app/feed.xml/route.goose`, or `app/feed/route.goose`) that fills a `gweb::Feed` and replies
+with `feed_rss` or `feed_atom` (1.8):
+
+```goose
+import gweb.site.feed;
+
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    var f = gweb::Feed { base: [], self_url: [], title: [], link: [], about: [], rss: [], atom: [], count: 0, updated: 0 };
+    gweb::feed_init(req, f, "Blog", "/blog", "News from us");       // title, page, description
+    for p in posts { gweb::feed_add(f, p.title, p.path, p.summary, p.published_unix, p.slug); }
+    gweb::feed_rss(res, f);                                           // or gweb::feed_atom(res, f)
+}
+```
+
+- `feed_add(f, title, link, summary, published = 0, id = "")`: `link` is a path (`/blog/x`, made absolute with `SITE_URL`,
+  else the request's scheme and host) or an `http(s)` URL; anything else returns false. `published` is Unix seconds
+  (0: no date; Atom then says 1970, so give one). `id` is a stable name, `""` is the link. Up to 500 items, 8 MiB.
+- RSS 2.0 dates are RFC 822 in GMT, Atom's RFC 3339 in UTC: `gweb::rfc822(out, secs)` and `gweb::rfc3339(out, secs)`
+  are public. Every text is XML-escaped (`gweb::xml_escape`, which also drops control bytes XML cannot hold).
+- Replies are `application/rss+xml` and `application/atom+xml`, `Cache-Control: public, max-age=600`; the feed's own
+  address is the request's. Link to it from a layout with `<link rel="alternate" type="application/rss+xml" href="/feed.xml">`.
+
+Any other typed body (CSV, XML, plain data): `gweb::reply(res, http::Status.Ok, "text/csv; charset=utf-8", body)` sets
+type, status and body. `gweb::set_content_type(res, type)` sets the type alone. `http::set_header(res, "Content-Type", ...)`
+now replaces the type too (before 1.8 it added a second line next to `text/plain`).
 
 ## Mail
 

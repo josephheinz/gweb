@@ -27,10 +27,10 @@ show() { echo "$1" | sed 's/^/    /'; }
 # 1 and 2. The site.
 cp -R "$HERE/routes/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then
-  case "$out" in *"routes: 20 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 19 tests ... 0 failed':"; show "$out" ;; esac
+  case "$out" in *"routes: 23 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 23 tests ... 0 failed':"; show "$out" ;; esac
   for name in t_basic::test_page t_basic::test_route_json t_basic::test_static_file t_basic::test_post_form t_basic::test_counter_second \
               t_basic::test_counter_third t_client::test_client_ip t_client::test_rate_limit_per_address t_client::test_trust_proxy t_client::test_upload t_client::test_header_from_load t_client::test_public_file \
-              t_csrf::test_no_form_no_cookie t_csrf::test_form_starts_token t_csrf::test_post_checked_without_form t_typed::test_set_header_content_type t_typed::test_reply_helper t_typed::test_redirect_body t_toolarge::test_too_large_form_is_html t_typed::test_expect_temporaries; do
+              t_csrf::test_no_form_no_cookie t_csrf::test_form_starts_token t_csrf::test_post_checked_without_form t_typed::test_set_header_content_type t_typed::test_reply_helper t_typed::test_redirect_body t_toolarge::test_too_large_form_is_html t_typed::test_expect_temporaries t_feed::test_dates t_feed::test_rss t_feed::test_atom; do
     case "$out" in *"ok $name"*) ok ;; *) bad "no 'ok $name' line:"; show "$out" ;; esac
   done
   # 1.6: an upload's file is deleted after the reply.
