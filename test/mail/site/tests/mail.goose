@@ -18,7 +18,17 @@ fn check_sent(t: gweb::Tester&, ctx: gweb::Ctx&, job: const jobs::Job&) {
     gweb::expect_contains(t, t.mails, "We got it.");
 }
 
-// The queue runs only in the server, so under gweb test the handler's enqueue is refused; its input check still runs.
+// gweb::run_jobs(t) runs what the handler queued, so the test sees the mail.
+fn test_queued_job_runs(t: gweb::Tester&) {
+    site::get(t, "/");
+    let res = site::post_form(t, "/contact?email=bo%40example.com&text=Hello+Bo", "x=1");
+    gweb::expect_status(t, res, 202);
+    gweb::expect_eq(t, gweb::run_jobs(t), 1, "one job ran");
+    gweb::expect_contains(t, t.mails, "To: bo@example.com");
+    gweb::expect_contains(t, t.mails, "Hello Bo");
+}
+
+// A handler's input check runs under gweb test too.
 fn test_handler_checks_input(t: gweb::Tester&) {
     site::get(t, "/");
     let res = site::post_form(t, "/contact", "x=1");

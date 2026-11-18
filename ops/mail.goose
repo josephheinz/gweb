@@ -368,7 +368,11 @@ fn mail_send(ctx: Ctx&, m: const Mail&) -> bool {
     var from: u8[>..] = [];
     env("GWEB_MAIL_FROM", from);
     // gweb test reads no .env file: its sender is test@localhost unless GWEB_MAIL_FROM is in the environment.
-    let sender = if trim(from).len == 0 && _mail_capture { "test@localhost" } else { trim(from) };
+    // The log transport sends nothing, so with no GWEB_MAIL_FROM in gweb dev it uses dev@localhost.
+    var sender: u8[>..] = [];
+    sender.append(trim(from));
+    if sender.len == 0 && _mail_capture { sender.append("test@localhost"); }
+    else if sender.len == 0 && dev && (spec.len == 0 || spec == "log") { sender.append("dev@localhost"); }
     return _mail_deliver(ctx, m, spec, sender, dev);
 }
 

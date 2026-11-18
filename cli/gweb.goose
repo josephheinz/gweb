@@ -4808,7 +4808,30 @@ fn gen_test_main() -> u8[>..] {
     gen_main_body(m, true);
     m.append("\n");
     gen_site_fns(m);
+    if has_jobs {
+        // gweb::run_jobs(t): runs every job a test (or a job) queued, once, and collects the mails they sent (1.8.1).
+        m.append("""
+fn gweb::run_jobs(t: gweb::Tester&) -> i64 {
+    var n = 0;
+    while n < 1000 {
+        var bytes: u8[>..] = [];
+        var sched: u8[>..] = [];
+        let id, attempt, got = gweb::_job_take(0, 0, bytes, sched);
+        if !got { break; }
+        var ctx = gweb::_job_ctx(0, -1, id, attempt);
+        let batch, decoded = from_bytes<jobs::Job[>..]>(bytes);
+        var ok = false;
+        if decoded { for j in batch { ok = jobs::run(j, ctx); } }
+        gweb::_job_done(0, ok, ctx);
+        n += 1;
+    }
+    gweb::take_mails(t);
+    return n;
+}
+""");
+    }
     m.append("\nfn main() {\n    var gw_t = gweb::Tester { .. };\n    var before = 0;\n    gweb::_mail_capture = true;\n");
+    if has_jobs { m.append("    var gw_cfg = gweb::_default_config();\n    gweb::_jobs_init(gw_cfg);\n"); }
     if has_state && has_state_init { m.append("    state::init();\n"); }
     for f in test_fns {
         format(m, "    gw_t.name.clear();\n    gw_t.name.append(\"", f.ns, "::", f.name, "\");\n");

@@ -107,7 +107,7 @@ check "$(kill -0 $p 2>/dev/null && echo ok)" "GWEB_MAIL=smtp://127.0.0.1: the se
 kill $p 2>/dev/null; wait $p 2>/dev/null
 
 # The recipe in the README runs under gweb test.
-if out=$("$GWEB" -C "$WORK/site" test 2>&1) && printf '%s' "$out" | grep -q 'routes: 3 tests, .* 0 failed'; then ok; else bad "gweb test of the mail site"; show "$out"; fi
+if out=$("$GWEB" -C "$WORK/site" test 2>&1) && printf '%s' "$out" | grep -q 'routes: 4 tests, .* 0 failed'; then ok; else bad "gweb test of the mail site"; show "$out"; fi
 
 echo "mail: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
