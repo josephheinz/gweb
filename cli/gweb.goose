@@ -559,11 +559,28 @@ fn edit_distance(a: const u8[:], b: const u8[:]) -> i64 {
     return prev[b.len];
 }
 
+// "expression expected, found 'pad'" is goose refusing a reserved word as a name (1.8.1): says so. token is the caret's
+// text ("" when unknown). "" for any other message.
+fn reserved_word_hint(msg: const u8[:], token: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    for w in ["pad", "type", "where", "self"] {
+        var want: u8[>..] = [];
+        format(want, "found '", w, "'");
+        if find(msg, "expected") >= 0 && find(msg, want) >= 0 { format(out, msg, " ('", w, "' is a reserved word in Goose: name the variable or field something else)"); return out; }
+    }
+    return out;
+}
+
 // goose's `unknown function: [ns::]name` with a hint (1.7): `add import lib.x;` when lib/x.goose declares ns and
 // defines name, else `did you mean ns::other?` for the closest function of that namespace (the file's own for a
 // bare name; gweb's from its checkout). "" when there is nothing to add. path is the file the error is in.
 fn unknown_fn_hint(msg: const u8[:], path: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
+    // decode is generated for a struct named *Form (1.8.1): a form struct of another name has none.
+    if trim(msg) == "unknown function: decode" {
+        format(out, msg, " (gweb generates decode for a struct whose name ends in Form, such as struct SignupForm, in this page.goose or route.goose)");
+        return out;
+    }
     let pre = "unknown function: ";
     if !starts_with(msg, pre) || find(msg, "(did you mean") >= 0 || find(msg, "add `import") >= 0 { return out; }
     let full = trim(msg[pre.len..]);
@@ -731,6 +748,7 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
             if !(i + 1 < lines.len && is_caret_line(lines[i + 1])) {
                 var hint = unknown_fn_hint(msg, path);
                 if hint.len == 0 { hint.append(len_hint(msg, "")); }
+                if hint.len == 0 { hint.append(reserved_word_hint(msg, "")); }
                 if hint.len > 0 { format(out, line[..line.len - msg.len], hint, "\n"); } else { format(out, line, "\n"); }
                 continue;
             }
@@ -770,6 +788,7 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
             if gcol >= 0 { better.append(field_msg(msg, gen, ln, gcol, token)); }
             if better.len == 0 { better.append(len_hint(msg, token)); }
             if better.len == 0 { better.append(unknown_fn_hint(msg, path)); }
+            if better.len == 0 { better.append(reserved_word_hint(msg, token)); }
             let text = if better.len > 0 { better[..] } else { msg[..] };
             if !have || real == shown {
                 if better.len > 0 { format(out, path, ":", ln, ": ", sev, ": ", text, "\n"); } else { format(out, line, "\n"); }

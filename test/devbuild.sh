@@ -152,6 +152,15 @@ check "$(printf '%s\n' "$out" | grep -q '^app/page.goose:7: error:' && printf '%
   "a page.goose error keeps goose's excerpt and caret"
 [ "$fail" = 0 ] || show "$out"
 
+# 1b. Hints (1.8.1): a reserved word as a name, and decode for a struct that is not named *Form.
+fresh hints
+printf 'import std;\nimport net.http;\nimport gweb;\nstruct Props { n: i64 }\nfn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {\n    var pad = 3;\n    return Props { n: pad };\n}\n' > "$WORK/hints/app/page.goose"
+out=$("$GWEB" -C "$WORK/hints" build 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF "'pad' is a reserved word in Goose" && echo ok)" "a reserved word as a name says so: $(printf '%s\n' "$out" | head -n 4)"
+printf 'import std;\nimport net.http;\nimport gweb;\nimport gweb.forms.form;\nstruct Signup { email: u8[..100] }\nstruct Props { n: i64 }\nfn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {\n    var f = Signup { email: "" };\n    var errs = gweb::no_errors();\n    decode(req, ctx, f, errs);\n    return Props { n: 1 };\n}\n' > "$WORK/hints/app/page.goose"
+out=$("$GWEB" -C "$WORK/hints" build 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF "struct whose name ends in Form" && echo ok)" "decode without a *Form struct says why: $(printf '%s\n' "$out" | head -n 4)"
+
 # 2. gweb build --dev.
 fresh ok
 out=$("$GWEB" -C "$WORK/ok" build --dev 2>&1)

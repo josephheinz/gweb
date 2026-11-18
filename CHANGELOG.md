@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (v1.8.1)
+
+From goose-cms round 7 (D9):
+
+- `gweb dev`'s `log` mail transport needs no sender: `GWEB_MAIL_FROM` defaults to `dev@localhost` (`gweb test` has `test@localhost`).
+- New: `gweb::run_jobs(t)` in route tests runs the jobs a request queued and collects their mails; the job queue exists under `gweb test`. The README's `take_mails`/`jobs::run` order is corrected.
+- New: `gweb::origin_ok(req, ctx, res)` for an anonymous form on a cacheable page (a route with `const CSRF = false;`): same-origin check by `Sec-Fetch-Site`, `Origin` or `Referer`. Route tests send an `Origin` header.
+- `gweb dev` stops its server when it gets SIGTERM, SIGINT or SIGHUP (the server was left listening).
+- Errors: a reserved word used as a name (`pad`, `type`, `where`, `self`) says so; `decode` without a struct named `*Form` says that is the rule.
+
 ## v1.8.0
 
 - New: faster `gweb dev` rebuilds (`docs/dev-builds.md`). A goose-cms site, save to page served: a template text

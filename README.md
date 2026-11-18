@@ -795,6 +795,12 @@ secret, one token for the browser session.
   A request whose `Sec-Fetch-Site` is anything but `same-origin` or `none` (so `cross-site` and
   `same-site`) gets `403 cross-site request refused`. Browsers send that header only over HTTPS and
   to `localhost`, so on plain HTTP the token is the check that counts.
+- A form on a page that must stay cacheable (a poll, a "was this helpful") cannot show a token: that page would be
+  `no-store` with a per-visitor cookie. Post it to a route with `const CSRF = false;` that starts with
+  `if !gweb::origin_ok(req, ctx, res) { return; }` (1.8.1): a browser's `Sec-Fetch-Site: same-origin`, else an `Origin` or
+  `Referer` with the request's host (`X-Forwarded-Host` with `GWEB_TRUST_PROXY`) is accepted; anything else, none included, is a 403.
+  Only for posts a forged request cannot harm (votes, messages; pair it with `gweb::rate_limit`), never a login. Route
+  tests send `Origin: http://<t.host>` with the CSRF token unless `t.headers` has its own.
 - A route turns both checks off with `const CSRF = false;` on a line of its own, for APIs called by
   clients that are not browsers, webhooks, and cross-site browser callbacks (an OIDC `form_post`, a
   3-D Secure return). A route that opts out must not trust cookies for authority. Pages have no opt-out.
@@ -1414,7 +1420,8 @@ now replaces the type too (before 1.8 it added a second line next to `text/plain
 
 `import gweb.ops.mail;` (1.8). One message to one recipient, with `GWEB_MAIL` choosing the transport:
 
-- `log`: the whole message goes to the log at Info; the default in `gweb dev` and `gweb test`.
+- `log`: the whole message goes to the log at Info; the default in `gweb dev` and `gweb test`. It needs no sender there:
+  `GWEB_MAIL_FROM` is `dev@localhost` in `gweb dev` and `test@localhost` in `gweb test` unless set (1.8.1).
 - `smtp://host:port`: plain SMTP (`EHLO`, `MAIL FROM`, `RCPT TO`, `DATA`; 5 s connect, 10 s in all). No TLS and no `AUTH`, so the
   host must be loopback or private (10/8, 172.16/12, 192.168/16, fc00::/7) or the server exits 2 at startup. Point it at a
   local relay or sidecar that does TLS and `AUTH` (see [docs/DEPLOY.md](docs/DEPLOY.md)).
@@ -1447,8 +1454,16 @@ fn run(job: const Job&, ctx: gweb::Ctx&) -> bool {
 ```
 
 In route tests `t.mails` holds what `mail_send` logged: `gweb::expect_contains(t, t.mails, "Subject: Thanks")`. A request
-collects its mails; after a `mail_send` or `jobs::run` of your own, call `gweb::take_mails(t)` first. The sender is
-`test@localhost` unless `GWEB_MAIL_FROM` is set. Queued jobs are lost on a restart (see Operations).
+collects its mails. Jobs a request queued do not run by themselves in a test: `gweb::run_jobs(t)` (1.8.1) runs every job
+queued so far (and those they queue), once each, collects their mails and returns how many ran; a job that returns false
+is retried later, not by `run_jobs`. To run one job of your own, call `jobs::run(job, ctx)` first and `gweb::take_mails(t)`
+after it, in that order. The sender is `test@localhost` unless `GWEB_MAIL_FROM` is set. Queued jobs are lost on a restart (see Operations).
+
+```goose
+site::post_form(t, "/contact", "email=ann%40example.com&text=Hi");     // the handler calls jobs::enqueue
+gweb::expect_eq(t, gweb::run_jobs(t), 1, "one job");
+gweb::expect_contains(t, t.mails, "To: ann@example.com");
+```
 
 ## Route tests
 
