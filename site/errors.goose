@@ -102,7 +102,12 @@ fn _new_error(status: i64, message: const u8[:], crashed: bool) -> ErrorInfo {
 }
 
 // gweb: error <id>: <status> <method> <target>: <text>
+// gweb test sets this: a 4xx a handler answers on purpose (a 404, a 422, a 429) is not logged as an error, so the
+// output of a run shows the failures (1.8). A 5xx and a crash are always logged.
+var _quiet_client_errors = false;
+
 fn _report_error(e: const ErrorInfo&, req: const http::Request&, text: const u8[:]) {
+    if _quiet_client_errors && e.status < 500 && !e.crashed { return; }
     print("gweb: error ", e.id, ": ", e.status, " ", req.method_text, " ", req.target, ": ", text);
 }
 

@@ -1420,6 +1420,12 @@ fn test_add(t: gweb::Tester&) {
   `text` is any text, not only `res.body`. In your own checks, `find(text, x) >= 0` is "contains" (`find` is -1 when absent);
   `gweb::expect_eq(t, got, want, what)` (1.6) compares text or `i64` and prints `what: got 'a', want 'b'`;
   `gweb::header_of(res, name)` and `gweb::form_field(out, name, value)` help build and read messages.
+- The status is `http::code(res.status)` (an `i64`: `gweb::expect_eq(t, http::code(res.status), 404, "status")`; 1.8).
+  A temporary goes to the checks that take text: `expect_contains(t, site::get(t, "/").body, "milk")`, `expect_eq(t,
+  site::get(t, "/").content_type, ...)`. A whole reply cannot (goose binds no temporary to a `const&`), so keep it in a
+  variable; a block `{ let r = site::get(t, "/"); gweb::expect_status(t, r, 200); }` frees the name.
+- A 4xx a handler answers in a test (`gweb::fail(ctx, 404, ...)`, a 422, a 429, a 413) is not logged as `gweb: error ...`
+  (1.8); a 5xx and a crash are. Check the status instead.
 - Uploads (1.6): `gweb::multipart_field(parts, name, value)` and `gweb::multipart_file(parts, name, filename, content_type, data)`
   build the body of `site::post_multipart`. Files go to `t.upload_dir` (`.gweb.test/uploads`, emptied by each run) with the
   server's default limits, so `form_upload`, `check_upload` and `save_upload` work; an unsaved file is deleted after the reply.

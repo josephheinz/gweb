@@ -129,6 +129,7 @@ fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: 
     raw.append("\r\n");
     raw.append(body);
 
+    _quiet_client_errors = true;
     var res = http::new_response();
     // req points into raw, so raw stays alive until the reply is built
     let req, parsed = http::parse_request(raw);

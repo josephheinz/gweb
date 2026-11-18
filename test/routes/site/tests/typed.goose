@@ -46,3 +46,14 @@ fn test_redirect_body(t: gweb::Tester&) {
     gweb::expect_header(t, with, "Content-Type", "text/html; charset=utf-8");
     gweb::expect_contains(t, with.body, "<a href=\"/api/hello\">");
 }
+
+// What a temporary can go to (1.8): text (`.body`, `.headers`, `.content_type` of a reply) and a status code. A whole reply
+// cannot (goose binds no temporary to a const&): keep it in a variable, in a block if the name is in the way.
+fn test_expect_temporaries(t: gweb::Tester&) {
+    gweb::expect_contains(t, site::get(t, "/api/typed").body, "<rss/>");
+    gweb::expect_eq(t, site::get(t, "/api/typed").content_type, "application/rss+xml; charset=utf-8", "the type");
+    gweb::expect_eq(t, http::code(site::get(t, "/api/typed").status), 200, "http::code of a status");
+    { let r = site::get(t, "/api/typed"); gweb::expect_status(t, r, 200); }
+    // a 4xx the handler answers is not logged as an error (see the run's output)
+    { let r = site::post_form(t, "/api/upload", ""); gweb::expect_status(t, r, 422); }
+}
