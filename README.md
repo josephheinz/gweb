@@ -1190,7 +1190,8 @@ and past 50,000 URLs. `public/sitemap.xml` beside `app/sitemap.goose` is a build
 `gweb::sitemap_base(s, "https://example.com")` replaces the base URL of every entry, at any time, for a site that
 serves several hosts. An `fn robots(req: const http::Request&, ctx: gweb::Ctx&, out: u8[>..]&)` in
 `app/sitemap.goose` writes the whole `/robots.txt` body in place of the generated one (the headers are set
-for it); `public/robots.txt` still wins over both.
+for it); `public/robots.txt` still wins over both. `gweb::not_found(ctx)` (or `gweb::fail`) in `entries` or `robots`
+answers that instead of the sitemap or the text (1.6), for a host the app does not serve.
 
 ## Page cache and `gweb export`
 

@@ -3854,7 +3854,11 @@ fn gen_sitemap(m: u8[>..]&) {
         m.append("        Options => { gweb::_options(res, \"GET, HEAD, OPTIONS\"); return; },\n");
         m.append("        _ => { gweb::_method_not_allowed(res, \"GET, HEAD, OPTIONS\"); return; },\n    }\n");
         if name == "robots_txt" {
-            if has_robots { m.append("    gweb::_robots_begin(res);\n    smap::robots(req, ctx, res.body);\n}\n"); }
+            // gweb::not_found(ctx) or gweb::fail in robots or entries answers that instead (1.6), without the cache header.
+            if has_robots {
+                m.append("    var body: u8[>..] = [];\n    smap::robots(req, ctx, body);\n    if ctx.outcome != gweb::Outcome.Continue { return; }\n");
+                m.append("    gweb::_robots_begin(res);\n    res.body.append(body);\n}\n");
+            }
             else { m.append("    gweb::_robots_reply(req, res);\n}\n"); }
             continue;
         }
@@ -3865,7 +3869,7 @@ fn gen_sitemap(m: u8[>..]&) {
             url_of(u, d.rel);
             m.append("    gweb::sitemap_add(s, \""); lit(m, u); m.append("\");\n");
         }
-        if has_entries { m.append("    smap::entries(req, ctx, s);\n"); }
+        if has_entries { m.append("    smap::entries(req, ctx, s);\n    if ctx.outcome != gweb::Outcome.Continue { return; }\n"); }
         m.append("    gweb::_sitemap_reply(res, s);\n}\n");
     }
     m.append("\n");

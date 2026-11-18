@@ -150,6 +150,11 @@ if out=$("$GWEB" -C "$HERE/sitemap/multi" build 2>&1); then
     serves mm /sitemap.xml 'application/xml' "$WORK/want.xml" -H 'Host: a.test'
     printf 'User-agent: *\nDisallow: /private\nSitemap: https://b.test/sitemap.xml\n' > "$WORK/want.txt"
     serves mr /robots.txt 'text/plain' "$WORK/want.txt" -H 'Host: b.test'
+    # 1.6: gweb::not_found(ctx) in entries or robots answers 404, without the sitemap's Cache-Control.
+    for p in /sitemap.xml /robots.txt; do
+      code=$(curl -s -D "$WORK/nf.h" -o /dev/null -w '%{http_code}' -H 'Host: nope.test' "http://127.0.0.1:$PORT$p")
+      check "$([ "$code" = 404 ] && ! grep -qi 'max-age=3600' "$WORK/nf.h" && echo ok)" "$p for an unknown host: 404 without the cache header (got $code)"
+    done
     stop
   fi
   rm -rf "$HERE/sitemap/multi/.gweb"

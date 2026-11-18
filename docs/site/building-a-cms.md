@@ -144,7 +144,7 @@ TTL 0 means "until `gweb::epoch_bump()`". The admin calls it after every write, 
 cache on its next lookup. A page with a CSRF token or a cookie is never stored.
 
 `app/sitemap.goose` calls `gweb::sitemap_base(s, "https://" + host)` and lists that host's nodes. `fn robots` writes
-the host's `robots.txt`. The admin pages set `const SITEMAP = false;`.
+the host's `robots.txt`. For an unknown host both call `gweb::not_found(ctx)` (1.6). The admin pages set `const SITEMAP = false;`.
 
 ## 7. Slugs that cannot collide
 
