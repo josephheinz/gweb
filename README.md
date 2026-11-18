@@ -1048,9 +1048,9 @@ gweb::save_upload(p.form.photo, dest);            // false if dest exists or its
   (`--max-upload-text`); each has a `GWEB_*` variable. A malformed body is a 400, a file over the limit a 413.
 - A body over `--max-upload`, `--max-body` or `MAX_UPLOAD` is a 413 with a message that names the limit
   (`This file is too large. The limit is 32 MiB.`). A browser navigation or form post (`Accept` names `text/html`,
-  no `GW-Fragment`), or any urlencoded or multipart form post without `Accept: application/json`, `GW-Fragment` or
-  `X-Requested-With` (curl's `*/*`, a script that sends none; 1.8), gets the nearest `error.html`, or the built-in
-  page; fetch and fragment requests, and a request that asks for JSON, get JSON. A body
+  no `GW-Fragment`) gets the nearest `error.html`, or the built-in page; fetch, curl (`Accept: */*`) and fragment
+  requests get JSON, since a script and a `fetch` of `FormData` look alike (1.8: checked; a browser's own form post
+  sends `text/html` and gets the page). A body
   over `--max-upload` or `--max-body` is never read: the reply says `Connection: close`, and gweb reads and drops what
   the client still sends (up to 10 s) before closing, so the browser shows the reply instead of a reset.
 - To answer it yourself, define `fn too_large` beside `fn POST` in `page.goose` or `route.goose` (1.5). It runs

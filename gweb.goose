@@ -503,6 +503,10 @@ fn set_status(ctx: Ctx&, code: i64) { ctx.status = code; }
 
 fn unprocessable(ctx: Ctx&) { ctx.status = 422; }
 
+// gweb test sets this: a 4xx a handler answers on purpose (a 404, a 422, a 429) is not logged as an error, so the
+// output of a run shows the failures (1.8). A 5xx and a crash are always logged.
+var _quiet_client_errors = false;
+
 let MAX_REDIRECT = 8192;
 
 // The reply keeps a body and Content-Type the handler set on `res` before calling this; set none, it has neither (1.8).

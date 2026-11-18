@@ -21,7 +21,7 @@ From goose-cms reviews (`gweb-todo`): a mailer, feeds, and fixes.
 - New: `gweb::Feed`: RSS 2.0 and Atom from one list (`import gweb.site.feed;`), `rfc822`, `rfc3339` and `xml_escape` public. Test: `test/routes.sh`.
 - Fix: `http::set_header(res, "Content-Type", ...)` replaces the type; it left `text/plain` and added a second line. New `gweb::reply(res, status, type, body)` and `gweb::set_content_type` for RSS, XML, CSV.
 - Change: `gweb::redirect` keeps a body and Content-Type the handler set on `res`; with none it sends neither, as before.
-- Fix: a form post (urlencoded or multipart) over its limit with no `Accept: text/html` (curl, a script) gets the HTML error page, not JSON; `Accept: application/json`, `GW-Fragment` and `X-Requested-With` still get JSON.
+- Docs: a body over its limit gets the HTML page only for `Accept: text/html` (a browser's form post); curl and `fetch` send `*/*` and get JSON, by design (they look alike). Test: `test/routes.sh`.
 - New: `save_upload` makes the missing folders of `dest` (mode 0700); `gweb::mkdir_p(dir)`. Docs: private upload storage.
 - New: compile errors hint common slips: `.length()`, `.push_back`, `.substr`, `.contains`, `string` or `int` as a type, `+` on text. `.length` on text already had its hint (1.6), in `build`, `check` and `test`.
 - Change: in `gweb test` a 4xx a handler answers is not logged as `gweb: error`. Docs: `http::code(res.status)`; an `expect_*` takes text temporaries, not a whole reply (goose binds no temporary to a `const&`).

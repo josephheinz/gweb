@@ -4281,7 +4281,7 @@ fn gen_error_reply(m: u8[>..]&) {
         format(api, "route == ", i);
     }
     // A body over its limit: HTML for a browser navigation or form post, JSON otherwise, page or route.
-    m.append("    if ctx.too_large > 0 { if !(gweb::_wants_html(req) || gweb::_form_wants_html(req)) { gweb::_error_json(res, info); return; } }\n");
+    m.append("    if ctx.too_large > 0 { if !gweb::_wants_html(req) { gweb::_error_json(res, info); return; } }\n");
     if api.len > 0 { format(m, "    else if ", api, " { gweb::_error_json(res, info); return; }\n"); }
     m.append("    ctx.title.clear();\n    gweb::_error_start(res, info);\n");
     m.append("    match error_at(route) {\n");
