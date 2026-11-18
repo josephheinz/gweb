@@ -1,8 +1,12 @@
 import std;
 import net.http;
 import gweb;
+import gweb.auth.csrf;
+
+const CSRF = false;   // an anonymous form: no token, so its page stays cacheable; origin_ok is the check
 
 fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    if !gweb::origin_ok(req, ctx, res) { return; }
     var to: u8[>..] = [];
     var text: u8[>..] = [];
     if !gweb::query(req, "email", to) || !gweb::query(req, "text", text) {

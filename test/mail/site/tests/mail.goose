@@ -42,3 +42,21 @@ fn test_bad_address_fails_the_job(t: gweb::Tester&) {
     gweb::take_mails(t);
     gweb::expect_not_contains(t, t.mails, "Bcc: q@r.s");
 }
+
+// const CSRF = false plus gweb::origin_ok: same origin passes (no cookie, no token), another origin or none is refused.
+fn test_origin_check(t: gweb::Tester&) {
+    t.auto_csrf = false;
+    let q = "/contact?email=bo%40example.com&text=Hi";
+    t.headers.append("Origin: http://evil.example\r\n");
+    let r1 = site::post_form(t, q, "x=1");
+    gweb::expect_status(t, r1, 403);
+    let r2 = site::post_form(t, q, "x=1");
+    gweb::expect_status(t, r2, 403);   // no header at all
+    t.headers.append("Origin: http://test\r\n");
+    let ok = site::post_form(t, q, "x=1");
+    gweb::expect_status(t, ok, 202);
+    gweb::expect_not_contains(t, ok.headers, "Set-Cookie");
+    t.headers.append("Sec-Fetch-Site: cross-site\r\nOrigin: http://test\r\n");
+    let r3 = site::post_form(t, q, "x=1");
+    gweb::expect_status(t, r3, 403);
+}

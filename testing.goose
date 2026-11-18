@@ -128,6 +128,7 @@ fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: 
         let tok, has = _jar_get(t, "gw_csrf");
         if has { format(raw, "X-CSRF-Token: ", tok, "\r\n"); }
     }
+    if t.auto_csrf && method != "GET" && find(t.headers, "rigin:") < 0 { format(raw, "Origin: http://", t.host, "\r\n"); }   // gweb::origin_ok
     if body.len > 0 { format(raw, "Content-Type: ", content_type, "\r\nContent-Length: ", body.len, "\r\n"); }
     if t.headers.len > 0 {
         raw.append(t.headers);

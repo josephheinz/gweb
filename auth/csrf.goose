@@ -96,3 +96,41 @@ fn _csrf_ok(req: const http::Request&, ctx: const Ctx&, res: http::Response&) ->
     http::text(res, http::Status.Forbidden, "CSRF token missing or wrong; reload the page and try again\n");
     return false;
 }
+
+// For an anonymous form on a cacheable page (1.8.1): the route says `const CSRF = false;` and calls this first. The page
+// then shows no token, so it stays cacheable and sets no cookie. True for a safe method. For the rest it wants a browser
+// that says the request is from this site: Sec-Fetch-Site same-origin, else an Origin (or, with none, a Referer) whose
+// host is the request's Host. Anything else, a missing header included, is a 403 and false. Use it only where a forged
+// post does no harm beyond what any visitor could do (a vote, a signup, a message): it is not a login check. Pair it with
+// gweb::rate_limit.
+fn origin_ok(req: const http::Request&, ctx: const Ctx&, res: http::Response&) -> bool {
+    let m = req.method;
+    if m == http::Method.Get || m == http::Method.Head || m == http::Method.Options || m == http::Method.Other { return true; }
+    let site, has_site = http::header(req, "sec-fetch-site");
+    if has_site { if trim(site) == "same-origin" { return true; } }
+    else {
+        var host: u8[>..] = [];
+        let fh, has_fh = http::header(req, "x-forwarded-host");
+        let h, has_h = http::header(req, "host");
+        if ctx.auth.trust_proxy && has_fh { host.append(trim(fh)); } else if has_h { host.append(trim(h)); }
+        let o, has_o = http::header(req, "origin");
+        var got = has_o;
+        var ref: u8[>..] = [];
+        if got { ref.append(trim(o)); }
+        else {
+            let r, has_r = http::header(req, "referer");
+            if has_r { ref.append(trim(r)); got = true; }
+        }
+        if got && host.len > 0 {
+            let sch = find(ref, "://");
+            if sch > 0 {
+                let rest = ref[sch + 3..];
+                var end = 0;
+                while end < rest.len && rest[end] != '/' && rest[end] != '?' && rest[end] != '#' { end += 1; }
+                if http::eq_nocase(rest[..end], host) { return true; }
+            }
+        }
+    }
+    http::text(res, http::Status.Forbidden, "cross-site request refused\n");
+    return false;
+}
