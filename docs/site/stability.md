@@ -87,7 +87,7 @@ A `gweb::` function, type or constant is stable if the README, a page under `doc
 `DESIGN-ADDENDUM` documents it, or if it is in the Signatures block. That covers `Ctx`, `Config`, `Level`,
 `FieldErrors`, `FileOptions`, `Schedules`, `Sitemap`, `ErrorInfo`, `ViewMeta` and `FieldUi`, and the functions named
 in the README sections (cookies, CSRF, sessions, rate limits, CORS, forms, uploads, files, streaming, push, logging
-and metrics, i18n, Markdown, cache, jobs, tests). Added in 1.1: `FileOptions.sandbox`, `gweb::image_size`, `gweb::image_size_file`, `jobs::every_local`, and the generated `g_form_req`. Added in 1.2: `gweb::EnumLabel`, and redirect URLs up to 8,192 bytes. Added in 1.4: `gweb::form_text_max`. Added in 1.5: `fn too_large(req, ctx, limit)` in `page.goose` and `route.goose`, `Ctx.too_large`, `gweb::size_text`, and a 413 page (not JSON) for a browser whose body is over a limit. Names in the Limits table keep their stated defaults. A limit may
+and metrics, i18n, Markdown, cache, jobs, tests). Added in 1.1: `FileOptions.sandbox`, `gweb::image_size`, `gweb::image_size_file`, `jobs::every_local`, and the generated `g_form_req`. Added in 1.2: `gweb::EnumLabel`, and redirect URLs up to 8,192 bytes. Added in 1.4: `gweb::form_text_max`. Added in 1.5: `fn too_large(req, ctx, limit)` in `page.goose` and `route.goose`, `Ctx.too_large`, `gweb::size_text`, and a 413 page (not JSON) for a browser whose body is over a limit. Added in 1.6: `gweb::expect_eq`, `gweb::multipart_field`, `gweb::multipart_file`, the generated `site::post_multipart`, `Tester.client_ip`, `Tester.trust_proxy` and `Tester.upload_dir`; `gweb::stream_file`, `gweb::file_size` and `gweb::public_file`; `not_found` and `fail` in `app/sitemap.goose`. Names in the Limits table keep their stated defaults. A limit may
 grow; it never shrinks.
 
 **Not stable:** a name the docs do not mention, and every name that begins with `_` (see Internal names). They may be
@@ -104,6 +104,9 @@ Added in 1.4: the `{#var n = e}` tag, `gweb::Text`, `gweb::LongText`, `root stru
 `g_read_errs`, `gweb::enum_name` and `gweb::enum_label`, an enum of a view printing its label in `{expr}`, and
 `ITEM_LABEL` of an enum or a foreign field (`gw_label`). `g_form_req` draws no `maxlength`, and `check_length` counts
 characters.
+Added in 1.6: a view with an empty `struct Props { }`; `@asset("/x")` in a mounted package resolving to the package's
+own `public/x` first; `const MIDDLEWARE = false;` in `route.goose`; `morph(from, to, force, start, end)` and
+`swap(root, html, force)` exported by `/_gw/gwi.js`; in `gweb dev`, the error overlay for crashes and 5xx only.
 
 ### Commands, flags and environment
 
@@ -119,6 +122,7 @@ characters.
 - Precedence: flag, then environment (real, then `.env` files), then default. A bad value exits 2 and names its source.
 - Exit status: 0 success, 1 a failed check or test, 2 a bad command line or config.
 - `gweb dev` defaults to `127.0.0.1`, port 60053, 2 workers and the access log; flags and variables still win.
+- `tool` lines whose root imports `views` build against the app's generated views (1.6).
 - The shape of messages (`path:line: error: msg`). The wording is not stable.
 
 ### URLs and cookies

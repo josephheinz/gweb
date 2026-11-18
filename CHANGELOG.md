@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Additions and fixes for goose-cms (`NOTES-FOR-GWEB.md`). Proposal for a package's jobs (ask 11): `docs/PROPOSAL-PACKAGE-JOBS.md`.
+
+- Docs: a page's `fn load(req, ctx, res)` keeps the headers it sets on `res` and still renders (a preview's `Cache-Control: no-store`); this already worked. goose-cms ask 7. Test: `test/routes.sh`.
+- Docs: `morph(from, to, force, start, end)` and `swap(root, html, force)` from `/_gw/gwi.js` are public, with the range form. goose-cms ask 10. Test: `test/morph_export_test.mjs`.
+- Docs: `send_file` streams within the call, so the caller may delete the file once it returns.
 - New: a `tool` whose root writes `import views from "...";` builds against the app's generated views (`views::g_*`, `v_<group>_<Name>::read`), from a gen into `.gweb.tools/gen/`, and is rebuilt when the app's code or views change, so a package CLI needs no copy of the view readers. Test: `test/views.sh`.
 - Docs: a tool may use goose-blob (or any package that needs gweb) by declaring `gweb`, `net` and the package in its root.
 - New: `gweb::public_file(url, out) -> bool` reads the bytes of a `public/` file (the app's, or a package's at its mount) from server code: the embedded bytes, or the file on disk in a dev build. Test: `test/routes.sh`.
