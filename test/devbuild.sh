@@ -115,6 +115,18 @@ printf 'fn gw_count(xs: const i64[:]) -> i64 { return xs.count; }\n' >> "$WORK/l
 out=$("$GWEB" -C "$WORK/len" build 2>&1)
 check "$(printf '%s\n' "$out" | grep -qxF 'app/len/page.goose:6: error: no field access on a value of type const i64[:] (arrays and text have .len)' && echo ok)" "a .goose file's .count on an array: the hint"
 [ "$fail" = 0 ] || show "$out"
+# 1.8: slips from other languages get what to write instead; `let n = s.length;` on text (a `const u8[:]`) too.
+printf 'fn gw_s1(s: const u8[:]) -> i64 { let n = s.length; return n; }\nfn gw_s2(s: const u8[:]) -> i64 { let b = s.length(); return 0; }\nfn gw_s3(o: u8[>..]&) { o.push_back(1); }\nfn gw_s4(s: const u8[:]) -> i64 { let c = s.substr(0, 1); return 0; }\nfn gw_s5(s: const u8[:]) -> i64 { let d = s.contains("x"); return 0; }\nfn gw_s6() -> i64 { let e: string = "x"; return 0; }\nfn gw_s7(s: const u8[:]) -> i64 { let f = s + "x"; return 0; }\n' >> "$WORK/len/app/len/page.goose"
+out=$("$GWEB" -C "$WORK/len" build 2>&1)
+for want in 'no field access on a value of type const u8[:] (arrays and text have .len)' 'unknown function or member: length (arrays and text have .len, a property)' \
+            'unknown function or member: push_back (.push(byte) adds one element' 'unknown function or member: substr (slice with text[a..b])' \
+            'no matching overload for call to contains (text has no .contains: find(text, x) >= 0)' 'unknown type: string (text is u8[:]' \
+            'operator + cannot be applied to const u8[:] and const u8[:] (join text with format('; do
+  check "$(printf '%s\n' "$out" | grep -qF "$want" && echo ok)" "slip hint: $want"
+done
+out=$("$GWEB" -C "$WORK/len" build --diagnostics json 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF '"message":"unknown function or member: length (arrays and text have .len, a property)"' && echo ok)" "a slip's hint in JSON diagnostics"
+[ "$fail" = 0 ] || show "$out"
 # 1.7: an unknown function's did-you-mean and missing lib import; library errors after an app error are left out.
 fresh hint
 mkdir -p "$WORK/hint/app/hint" "$WORK/hint/lib"

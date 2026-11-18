@@ -456,10 +456,40 @@ fn field_msg(msg: const u8[:], gen: const u8[:], ln: i64, gcol: i64, token: cons
     return out;
 }
 
+// What to write instead of a common slip from other languages, by goose's message (1.8); "" when msg is not one.
+// The message alone decides, so it works for the condensed text and for JSON diagnostics alike.
+fn slip_hint(msg: const u8[:]) -> const u8[:] {
+    let mem = "unknown function or member: ";
+    if starts_with(msg, mem) {
+        let n = trim(msg[mem.len..]);
+        if n == "length" || n == "size" || n == "count" { return "arrays and text have .len, a property"; }
+        if n == "push_back" || n == "pushback" { return ".push(byte) adds one element, .append(x) an array or text"; }
+        if n == "substr" || n == "substring" { return "slice with text[a..b]"; }
+        if n == "to_string" { return "build text with format(out, x), out: u8[>..]"; }
+        return "";
+    }
+    if msg == "no matching overload for call to contains" { return "text has no .contains: find(text, x) >= 0"; }
+    let ut = "unknown type: ";
+    if starts_with(msg, ut) {
+        let n = trim(msg[ut.len..]);
+        if n == "string" || n == "String" || n == "str" { return "text is u8[:] (const u8[:] to read, u8[>..] to build)"; }
+        if n == "int" || n == "long" || n == "number" { return "integers are i64 (or i32, u8, ...)"; }
+        if n == "float" || n == "double" { return "floats are f64"; }
+        if n == "boolean" || n == "Bool" { return "it is bool"; }
+        return "";
+    }
+    let plus = "operator + cannot be applied to ";
+    if starts_with(msg, plus) && (starts_with(msg[plus.len..], "u8[") || starts_with(msg[plus.len..], "const u8[")) &&
+       (find(msg, " and u8[") >= 0 || find(msg, " and const u8[") >= 0) { return "join text with format(out, a, b), out: u8[>..]"; }
+    return "";
+}
+
 // goose's `no field access on a value of type u8[..40]` for `x.length`, `.size` or `.count` on an array or text
 // type: the message with a hint (1.6); "" otherwise. token is the text the caret marks.
 fn len_hint(msg: const u8[:], token: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
+    let slip = slip_hint(msg);
+    if slip.len > 0 && !ends_with(msg, ")") { format(out, msg, " (", slip, ")"); return out; }
     let pre = "no field access on a value of type ";
     if !starts_with(msg, pre) || find(msg, "(arrays and text have .len)") >= 0 { return out; }
     let ty = trim(msg[pre.len..]);
@@ -697,7 +727,8 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
             seen.append(key[1..]);
             i += 1;
             if !(i + 1 < lines.len && is_caret_line(lines[i + 1])) {
-                let hint = unknown_fn_hint(msg, path);
+                var hint = unknown_fn_hint(msg, path);
+                if hint.len == 0 { hint.append(len_hint(msg, "")); }
                 if hint.len > 0 { format(out, line[..line.len - msg.len], hint, "\n"); } else { format(out, line, "\n"); }
                 continue;
             }
