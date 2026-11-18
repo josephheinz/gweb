@@ -953,6 +953,12 @@ page.
   last (`<li gw-key="{t.id}">`), and to an element that comes and goes in front of other siblings.
   An unkeyed element that comes and goes must be the last child of its parent. This rule applies to
   components too.
+- Your own scripts can use the same morph (1.6, stable): `import { morph, swap } from "/_gw/gwi.js";`.
+  `morph(from, to, force, start, end)` makes the children of element `from` match those of `to` (a node, usually a
+  `<template>`'s `content`, whose children it moves); with `start` and `end` (nodes inside `from`, for example two
+  comment markers) only the nodes between them change, and `end` `null` means to the end. `force` overwrites the value
+  of the focused control too. `swap(root, html, force)` morphs `root`'s children into the HTML text. The page must load
+  `gwi.js` (any page with a component or a `gw-target`), and gweb's own markup rules above apply.
 - `import gweb.forms.form;` gives `gweb::form(req, "name", out)` (URL-decoded, appended to `out`) and
   `gweb::form_int(req, "id")`. Several intents on one page are told apart by button names:
   `<button name="remove" value="3">`.

@@ -26,8 +26,19 @@ for (const file of ["gwi.js", "gwi.min.js"]) {
   m.morph(root, tpl.content);
   check(root.innerHTML == "<p gw-key=\"b\">two!</p><p gw-key=\"a\">one</p><p gw-key=\"c\">three</p>", file + " morph result: " + root.innerHTML);
   check(root.children[0] === b, file + " morph keeps the keyed node");
+  // The range form (documented in 1.6): only the nodes between start and end change.
+  root.innerHTML = "<h1>head</h1><!--s--><p gw-key=a>one</p><p>x</p><!--/s--><p>tail</p>";
+  const s = root.childNodes[1], z = root.childNodes[4], a = root.childNodes[2];
+  const t2 = document.createElement("template");
+  t2.innerHTML = "<p>y</p><p gw-key=a>one!</p>";
+  m.morph(root, t2.content, false, s, z);
+  check(root.innerHTML == "<h1>head</h1><!--s--><p>y</p><p gw-key=\"a\">one!</p><!--/s--><p>tail</p>", file + " range morph: " + root.innerHTML);
+  check(root.childNodes[3] === a, file + " range morph keeps the keyed node");
+  check(typeof m.swap == "function", file + " exports swap");
+  m.swap(root, "<p>swapped</p>");
+  check(root.innerHTML == "<p>swapped</p>", file + " swap: " + root.innerHTML);
   root.innerHTML = "<p gw-key=a>one</p><p gw-key=b>two</p>";
 }
 check(fs.statSync(path.join(client, "gwi.min.js")).size <= 4096, "gwi.min.js is within 4096 bytes");
-console.log(failed ? "morph_export: FAILED" : "morph_export: 6 passed");
+console.log(failed ? "morph_export: FAILED" : "morph_export: all passed");
 process.exit(failed ? 1 : 0);
