@@ -81,6 +81,20 @@ int32_t gweb_exec(gweb_bytes cmd) {
     return -1;
 }
 
+/* gweb dev: SIGTERM, SIGINT and SIGHUP only set a flag, which the watch loop reads to stop its server child. */
+static volatile sig_atomic_t term_seen = 0;
+static void on_term(int sig) { (void)sig; term_seen = 1; }
+void gweb_trap_term(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = on_term;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+}
+int32_t gweb_term_seen(void) { return term_seen ? 1 : 0; }
+
 int32_t gweb_kill(int64_t pid, int32_t sig) { return kill((pid_t)pid, sig) == 0; }
 
 /* With block 0: -2 while the child runs, else its exit status (or -1). */

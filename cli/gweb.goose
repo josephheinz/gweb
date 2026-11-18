@@ -29,6 +29,8 @@ import image;     // cli/image.goose is site/image.goose (a symlink): the reader
 extern fn c_run(cmd: const u8[:], out: u8[>..]&) -> i32 = "gweb_run";
 extern fn c_spawn(cmd: const u8[:]) -> i64 = "gweb_spawn";
 extern fn c_exec(cmd: const u8[:]) -> i32 = "gweb_exec";
+extern fn c_trap_term() = "gweb_trap_term";
+extern fn c_term_seen() -> i32 = "gweb_term_seen";
 extern fn c_kill(pid: i64, sig: i32) -> i32 = "gweb_kill";
 extern fn c_wait(pid: i64, blocking: i32) -> i32 = "gweb_wait";
 extern fn c_symlink(target: const u8[:], path: const u8[:]) -> i32 = "gweb_symlink";
@@ -6710,6 +6712,7 @@ fn dev(extra: u8[:][:]) {
         }
     }
     var pid: i64 = -1;
+    c_trap_term();       // SIGTERM, SIGINT and SIGHUP stop the server child too, then gweb dev (1.8.1)
     var code = code_stamp();
     var pub = public_stamp();
     write_dev_errors("");
@@ -6728,6 +6731,10 @@ fn dev(extra: u8[:][:]) {
     var ok_code: i64 = if first_ok { code } else { -1 };   // code_stamp() at the last build that passed
     loop {
         sleep_ms(100);
+        if c_term_seen() != 0 {
+            if pid > 0 { c_kill(pid, 15); c_wait(pid, 1); }
+            exit(0);
+        }
         if pid > 0 && c_wait(pid, 0) != -2 {
             write_stderr("gweb dev: the server exited; it starts again on the next change\n");
             pid = -1;

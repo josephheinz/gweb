@@ -218,6 +218,11 @@ check "$([ "$(grep -c 'only public/ changed' "$WORK/dev.out")" = 1 ] && echo ok)
 up=""
 for i in $(seq 1 40); do [ "$(curl -s -m 2 "$URL/new.txt")" = x ] && { up=yes; break; }; sleep 0.25; done
 check "$([ -n "$up" ] && echo ok)" "and is served"
+# A SIGTERM to gweb dev alone (not its group) stops the server child too (1.8.1).
+kill -TERM "$DEVPID" 2>/dev/null
+gone=""
+for i in $(seq 1 40); do curl -s -m 1 -o /dev/null "$URL/" || { gone=yes; break; }; sleep 0.25; done
+check "$([ -n "$gone" ] && echo ok)" "SIGTERM to gweb dev stops its server (port $PORT is free)"
 stopdev
 
 # 4. Template text and the split compile.
