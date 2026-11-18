@@ -5,6 +5,8 @@
 From a blind developer review of a goose-cms site.
 
 - Fix: the CSRF token is started per request, only when the reply's body shows it (a rendered `csrf_field` or `csrf_token`, from any template or `lib/` partial) or when `gweb::csrf_begin` runs. Was: a build-time scan for `gweb::csrf_` in a page's files started it on every request, so a catch-all `page.goose` with one form behind an `if` gave every page `Set-Cookie: gw_csrf` and `Cache-Control: no-store`. Every page `fn POST` and unsafe route method is still checked, whatever its GET rendered. `cache_store_key` now refuses a reply only when it shows the token. Tests: `test/routes.sh`, `test/csrf_test.goose`.
+- New: an unknown function in a compiler error gets `(did you mean query?)` from its namespace (the file's own functions, a `lib/` namespace, or gweb's), or ``(lib/util.goose declares it: add `import lib.util;` to this file)`` when only the import is missing. Test: `test/devbuild.sh`.
+- New: after an error in the app's own files, errors in gweb's generated or library code (`gweb.goose:676: cannot clear v while names is still used`) are left out, with a line that counts them; `--raw-errors` shows them. Test: `test/devbuild.sh`.
 - New: `gweb::expect_not_contains(t, text, needle)` and `gweb::expect_no_header(t, res, name)` in route tests. Test: `test/routes.sh`.
 
 ## v1.6.0

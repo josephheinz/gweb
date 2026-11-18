@@ -84,7 +84,10 @@ compile when the C is unchanged; and none when only `public/` changed, because t
 Compiler errors show once each. A template error gives `file:line:col` and a short excerpt of the line with a caret; a
 missing field names whose struct it is and its fields (`views/items/TeamMember: Props has no field "rol" (it has:
 title, role)`); `.length`, `.size` or `.count` on an array or text adds `(arrays and text have .len)` (1.6, in
-`--diagnostics json` too). `--raw-errors` (or `GWEB_RAW_ERRORS=1`) on `build`, `start`, `export`, `dev`, `check` or `test` shows
+`--diagnostics json` too). An unknown function gets `(did you mean query?)` from its namespace's functions, or,
+when a `lib/` file declares the namespace and defines it, `` (lib/util.goose declares it: add `import lib.util;` to this
+file) `` (1.7). After an error in your own files, errors in gweb's generated or library code are left out, with a
+line that counts them (1.7): they follow from yours. `--raw-errors` (or `GWEB_RAW_ERRORS=1`) on `build`, `start`, `export`, `dev`, `check` or `test` shows
 goose's whole output instead.
 
 ## `gweb update`

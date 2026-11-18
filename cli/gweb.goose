@@ -466,6 +466,182 @@ fn len_hint(msg: const u8[:], token: const u8[:]) -> u8[>..] {
     return out;
 }
 
+// Appends the name of each `fn NAME` in code, one per line.
+fn add_fn_names(code: const u8[:], out: u8[>..]&) {
+    for line in split(code, '\n') {
+        let t = trim_start(line);
+        if !starts_with(t, "fn ") { continue; }
+        var e = 3;
+        while e < t.len && ident_char(t[e]) { e += 1; }
+        if e > 3 { out.append(t[3..e]); out.push('\n'); }
+    }
+}
+
+// The files under dir ending in .goose, one path per line.
+fn goose_files(dir: const u8[:], out: u8[>..]&) {
+    var todo: u8[..512][>..] = [];
+    var first: u8[..512] = "";
+    first.append(dir);
+    todo.push(first);
+    while todo.len > 0 {
+        let d: u8[..512] = todo[todo.len - 1];
+        todo.pop();
+        var names: u8[>..] = [];
+        if !list_dir(d, names) { continue; }
+        for name in split(names, '\n') {
+            if name.len == 0 || name[0] == '.' { continue; }
+            var full: u8[>..] = [];
+            format(full, d, "/", name);
+            if is_dir(full) { if full.len < 512 { var t: u8[..512] = ""; t.append(full); todo.push(t); } }
+            else if ends_with(name, ".goose") { out.append(full); out.push('\n'); }
+        }
+    }
+}
+
+// True when code has the line `namespace ns;`.
+fn declares_ns(code: const u8[:], ns: const u8[:]) -> bool {
+    var want: u8[>..] = [];
+    format(want, "namespace ", ns, ";");
+    for line in split(code, '\n') { if trim(line) == want { return true; } }
+    return false;
+}
+
+fn edit_distance(a: const u8[:], b: const u8[:]) -> i64 {
+    var prev: i64[>..] = [];
+    var cur: i64[>..] = [];
+    for j in b.len + 1 { prev.push(j); }
+    for i in a.len {
+        cur.clear();
+        cur.push(i + 1);
+        for j in b.len {
+            let cost = if a[i] == b[j] { 0 } else { 1 };
+            cur.push(min(min(prev[j + 1] + 1, cur[j] + 1), prev[j] + cost));
+        }
+        prev.clear();
+        for v in cur { prev.push(v); }
+    }
+    return prev[b.len];
+}
+
+// goose's `unknown function: [ns::]name` with a hint (1.7): `add import lib.x;` when lib/x.goose declares ns and
+// defines name, else `did you mean ns::other?` for the closest function of that namespace (the file's own for a
+// bare name; gweb's from its checkout). "" when there is nothing to add. path is the file the error is in.
+fn unknown_fn_hint(msg: const u8[:], path: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let pre = "unknown function: ";
+    if !starts_with(msg, pre) || find(msg, "(did you mean") >= 0 || find(msg, "add `import") >= 0 { return out; }
+    let full = trim(msg[pre.len..]);
+    var ns: u8[>..] = [];
+    var base = full;
+    var k = full.len;
+    while k > 1 { k -= 1; if full[k] == ':' && full[k - 1] == ':' { ns.append(full[..k - 1]); base = full[k + 1..]; break; } }
+    if base.len == 0 || !is_ident(base) { return out; }
+    var names: u8[>..] = [];
+    if ns.len == 0 {
+        var code: u8[>..] = [];
+        if read_file(path, code) { add_fn_names(code, names); }
+        let gen = gen_of(path);
+        if gen.len > 0 {
+            var gpath: u8[>..] = [];
+            var gcode: u8[>..] = [];
+            format(gpath, gen_root, "/", gen);
+            if read_file(gpath, gcode) { add_fn_names(gcode, names); }
+        }
+    } else {
+        var files: u8[>..] = [];
+        if is_dir("lib") { goose_files("lib", files); }
+        for f in split(files, '\n') {
+            if f.len == 0 { continue; }
+            var code: u8[>..] = [];
+            if !read_file(f, code) || !declares_ns(code, ns) { continue; }
+            var mine: u8[>..] = [];
+            add_fn_names(code, mine);
+            var key: u8[>..] = [];
+            format(key, "\n", base, "\n");
+            var all: u8[>..] = [];
+            format(all, "\n", mine);
+            if find(all, key) >= 0 {
+                var imp: u8[>..] = [];
+                for c in f[..f.len - 6] { imp.push(if c == '/' { '.' } else { c }); }
+                format(out, msg, " (", f, " declares it: add `import ", imp, ";` to this file)");
+                return out;
+            }
+            names.append(mine);
+        }
+        if ns == "gweb" {
+            let home = gweb_home();
+            if home.len > 0 {
+                var gfiles: u8[>..] = [];
+                for sub in ["", "/auth", "/forms", "/http", "/ops", "/site"] {
+                    var d: u8[>..] = [];
+                    format(d, home, sub);
+                    var listed: u8[>..] = [];
+                    if !list_dir(d, listed) { continue; }
+                    for name in split(listed, '\n') { if ends_with(name, ".goose") { format(gfiles, d, "/", name, "\n"); } }
+                }
+                for f in split(gfiles, '\n') {
+                    var code: u8[>..] = [];
+                    if f.len > 0 && read_file(f, code) && declares_ns(code, "gweb") { add_fn_names(code, names); }
+                }
+            }
+        }
+    }
+    var best: u8[>..] = [];
+    var best_d = 3;
+    for n in split(names, '\n') {
+        if n.len == 0 || n == base || (n[0] == '_' && base[0] != '_') { continue; }
+        let d = edit_distance(base, n);
+        if d < best_d && d * 3 <= max(base.len, 3) { best_d = d; best.clear(); best.append(n); }
+    }
+    if best.len == 0 { return out; }
+    format(out, msg, " (did you mean ", ns, if ns.len > 0 { "::" } else { "" }, best, "?)");
+    return out;
+}
+
+// True for a diagnostic path in gweb's generated code (.gweb/) or a library (an absolute path: the app's own
+// files are reported relative to it).
+fn library_path(path: const u8[:]) -> bool { return starts_with(path, "/") || starts_with(path, ".gweb/") || starts_with(path, ".gweb.test/"); }
+
+// After an error in the app's own files, the errors goose then reports in gweb's generated or library code are
+// almost always caused by it (`cannot clear v while names is still used` in gweb.goose after a bad `let X = [];`):
+// they are left out, with a line that says how many (1.7). Without such an error every error is kept.
+fn drop_cascades(text: const u8[:]) -> u8[>..] {
+    var own = false;
+    for line in split(text, '\n') {
+        var path: u8[>..] = [];
+        var msg: u8[>..] = [];
+        var ln = 0;
+        var is_err = true;
+        if line.len > 0 && line[0] != ' ' && split_diag(line, path, ln, is_err, msg) && is_err && !library_path(path) { own = true; break; }
+    }
+    var out: u8[>..] = [];
+    if !own { out.append(text); return out; }
+    var hidden = 0;
+    let lines = split(text, '\n');
+    var i = 0;
+    while i < lines.len {
+        let line = lines[i];
+        i += 1;
+        var path: u8[>..] = [];
+        var msg: u8[>..] = [];
+        var ln = 0;
+        var is_err = true;
+        if line.len > 0 && line[0] != ' ' && split_diag(line, path, ln, is_err, msg) && library_path(path) {
+            if is_err { hidden += 1; }
+            // its excerpt and caret, and any indented lines under it
+            if i + 1 < lines.len && is_caret_line(lines[i + 1]) { i += 2; }
+            while i < lines.len && starts_with(lines[i], "  ") && !is_caret_line(lines[i]) { i += 1; }
+            continue;
+        }
+        if i < lines.len || line.len > 0 { out.append(line); out.push('\n'); }
+    }
+    while out.len > 1 && out[out.len - 1] == '\n' && out[out.len - 2] == '\n' { out.pop(); }
+    if hidden > 0 {
+        format(out, "gweb: ", hidden, if hidden == 1 { " more error" } else { " more errors" }, " in generated or library code left out; fix the errors above first (--raw-errors shows all)\n");
+    }
+    return out;
+}
+
 // The text a caret line marks in the excerpt line above it.
 fn caret_token(shown: const u8[:], caret: const u8[:]) -> const u8[:] {
     let c0 = find(caret, "^");
@@ -517,7 +693,8 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
             seen.append(key[1..]);
             i += 1;
             if !(i + 1 < lines.len && is_caret_line(lines[i + 1])) {
-                format(out, line, "\n");
+                let hint = unknown_fn_hint(msg, path);
+                if hint.len > 0 { format(out, line[..line.len - msg.len], hint, "\n"); } else { format(out, line, "\n"); }
                 continue;
             }
             // goose's excerpt of the line, and the caret under it
@@ -555,6 +732,7 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
             var better: u8[>..] = [];
             if gcol >= 0 { better.append(field_msg(msg, gen, ln, gcol, token)); }
             if better.len == 0 { better.append(len_hint(msg, token)); }
+            if better.len == 0 { better.append(unknown_fn_hint(msg, path)); }
             let text = if better.len > 0 { better[..] } else { msg[..] };
             if !have || real == shown {
                 if better.len > 0 { format(out, path, ":", ln, ": ", sev, ": ", text, "\n"); } else { format(out, line, "\n"); }
@@ -588,7 +766,7 @@ fn condense_errors(text: const u8[:], with_source: bool) -> u8[>..] {
         }
         i += 1;
     }
-    return out;
+    return drop_cascades(out);
 }
 
 // Compiler output (Goose's or the component translator's) to stderr: as is, or as JSON Lines in

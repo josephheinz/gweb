@@ -5,7 +5,8 @@
 #
 # 1. Compiler errors: each once, with its source line and no instantiation chain (page.html, a component, page.goose
 #    keeps goose's caret); a template error has its column and a short excerpt; a missing field names its view's
-#    Props and fields; --raw-errors and GWEB_RAW_ERRORS=1 show goose's own output; gweb check and test condense too.
+#    Props and fields; --raw-errors and GWEB_RAW_ERRORS=1 show goose's own output; gweb check and test condense too;
+#    an unknown function's hints and the left-out library errors (1.7).
 # 2. gweb build --dev: unhashed URLs; a rebuild with nothing changed skips the C compile; the binary reads public/
 #    from disk, uncached.
 # 3. gweb dev: a change under public/ alone needs no compile and restarts the same binary (pages reload); a page
@@ -109,6 +110,23 @@ printf '<p>{props.title.len}</p>\n' > "$WORK/len/app/len/page.html"
 printf 'fn gw_count(xs: const i64[:]) -> i64 { return xs.count; }\n' >> "$WORK/len/app/len/page.goose"
 out=$("$GWEB" -C "$WORK/len" build 2>&1)
 check "$(printf '%s\n' "$out" | grep -qxF 'app/len/page.goose:6: error: no field access on a value of type const i64[:] (arrays and text have .len)' && echo ok)" "a .goose file's .count on an array: the hint"
+[ "$fail" = 0 ] || show "$out"
+# 1.7: an unknown function's did-you-mean and missing lib import; library errors after an app error are left out.
+fresh hint
+mkdir -p "$WORK/hint/app/hint" "$WORK/hint/lib"
+printf 'namespace util;\n\nfn hello() -> i64 { return 1; }\n' > "$WORK/hint/lib/util.goose"
+printf 'import std;\nimport net.http;\nimport gweb;\nstruct Props { n: i64 }\nfn helper(x: i64) -> i64 { return x + 1; }\nfn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props { return Props { n: helpr(1) }; }\nfn b() -> i64 { return util::hello(); }\nfn c() -> i64 { return util::helo(); }\nlet KIDS = [];\n' > "$WORK/hint/app/hint/page.goose"
+printf '<p>{props.n}</p>\n' > "$WORK/hint/app/hint/page.html"
+out=$("$GWEB" -C "$WORK/hint" build 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF 'unknown function: helpr (did you mean helper?)' && echo ok)" "a bare unknown function: did you mean"
+check "$(printf '%s\n' "$out" | grep -qF 'unknown function: util::hello (lib/util.goose declares it: add `import lib.util;` to this file)' && echo ok)" \
+  "a lib function without its import: the import hint"
+check "$(printf '%s\n' "$out" | grep -qF 'unknown function: util::helo (did you mean util::hello?)' && echo ok)" "a lib namespace's unknown function: did you mean"
+check "$(printf '%s\n' "$out" | grep -qF 'can never receive elements' && ! printf '%s\n' "$out" | grep -qF 'gweb.goose:' &&
+         printf '%s\n' "$out" | grep -qE '^gweb: [0-9]+ more errors? in generated or library code left out' && echo ok)" \
+  "after an app error, gweb's own errors are left out and counted"
+out=$("$GWEB" -C "$WORK/hint" build --raw-errors 2>&1)
+check "$(printf '%s\n' "$out" | grep -qF 'gweb.goose:' && echo ok)" "--raw-errors keeps them"
 [ "$fail" = 0 ] || show "$out"
 # A .goose error: goose's excerpt is the source line, so its caret stays.
 fresh goose
