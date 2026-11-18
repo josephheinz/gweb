@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix: a package's `app/` or `lib/` that mentions `gweb::subscribe(` or `gweb::websocket(` starts the push hub, as the app's do; its event stream answered 503. goose-cms ask 3. Test: `test/packages.sh`.
 - Fix: a view with an empty `struct Props { }` builds: its `read`, `write`, `defaults`, `form` and `parse` are generated (they called a `gw_read_Props` that was not). goose-cms ask 1. Test: `test/views.sh`.
 
 ## v1.5.0

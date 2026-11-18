@@ -5010,6 +5010,14 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_hub = has_socket;
     scan_for_hub("app");
     if is_dir("lib") { scan_for_hub("lib"); }
+    // A package's app/ and lib/ start the hub too (1.6), as goose-cms's editor does.
+    for pk in pkgs {
+        for sub in ["app", "lib"] {
+            var d: u8[>..] = [];
+            format(d, pk.dir, "/", sub);
+            if is_dir(d) { scan_for_hub(d); }
+        }
+    }
     if is_dir("lib") {
         var lib_link: u8[>..] = [];
         format(lib_link, root, "/lib");

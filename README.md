@@ -1291,7 +1291,7 @@ a plain 404.
 ## Server push and WebSockets
 
 One hub thread (from goose-net's `net::Hub`) owns every long-lived connection, so idle clients cost no
-worker. gweb starts it when any file under `app/` or `lib/` mentions `gweb::subscribe(` or
+worker. gweb starts it when any file under `app/` or `lib/`, the app's or a package's (1.6), mentions `gweb::subscribe(` or
 `gweb::websocket(`, or `app/socket.goose` exists. A connection has one topic (at most 64 bytes);
 `publish` reaches every connection on a topic. Needs `import gweb.http.push;`.
 

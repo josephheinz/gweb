@@ -56,6 +56,16 @@ else
   bad "gweb gen of the project"; echo "$out"
 fi
 
+# A package file that mentions gweb::subscribe( starts the push hub (1.6); without one there is no hub.
+check "$(! grep -q 'import net.hub' "$WORK/ok/app/.gweb/main.goose" && echo ok)" "no hub without gweb::subscribe("
+fresh hub
+echo '// gweb::subscribe( for the event stream' >> "$WORK/hub/pkg/lib/users.goose"
+if out=$("$GWEB" -C "$WORK/hub/app" gen 2>&1); then
+  check "$(grep -q 'import net.hub' "$WORK/hub/app/.gweb/main.goose" && echo ok)" "a package's gweb::subscribe( starts the hub"
+else
+  bad "gweb gen with a package that subscribes"; echo "$out"
+fi
+
 # 2. Build and serve, when there is a compiler.
 goose=${GOOSE:-}
 [ -z "$goose" ] && goose=$(command -v goose 2>/dev/null || true)
