@@ -992,7 +992,7 @@ fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
 ```
 
 ```html
-<p><input name="email" value="{gweb::field_value(req, "email", "")}"@gweb::invalid(props.errs, "email")>
+<p><input name="email" value="@gweb::field_value(req, "email", "")"@gweb::invalid(props.errs, "email")>
 @gweb::field_error(props.errs, "email")</p>
 ```
 
