@@ -1396,7 +1396,9 @@ fn test_add(t: gweb::Tester&) {
 
 - `site::get`, `head`, `delete(t, target)`; `post_form`, `post_json`, `put_json`, `patch_json(t, target, body)`;
   `site::post_multipart(t, target, parts)` (1.6); `site::request(t, method, target, body, content_type)`. Each returns an `http::Response`.
-- `gweb::expect(t, ok, what)`, `expect_status`, `expect_contains(t, text, needle)`, `expect_header(t, res, name, value)`, which take the response as `const&`, so bind it first (`let res = site::get(...)`);
+- `gweb::expect(t, ok, what)`, `expect_status`, `expect_contains(t, text, needle)`, `expect_not_contains(t, text, needle)` (1.7),
+  `expect_header(t, res, name, value)` and `expect_no_header(t, res, name)` (1.7), which take the response as `const&`, so bind it first (`let res = site::get(...)`);
+  `text` is any text, not only `res.body`. In your own checks, `find(text, x) >= 0` is "contains" (`find` is -1 when absent);
   `gweb::expect_eq(t, got, want, what)` (1.6) compares text or `i64` and prints `what: got 'a', want 'b'`;
   `gweb::header_of(res, name)` and `gweb::form_field(out, name, value)` help build and read messages.
 - Uploads (1.6): `gweb::multipart_field(parts, name, value)` and `gweb::multipart_file(parts, name, filename, content_type, data)`

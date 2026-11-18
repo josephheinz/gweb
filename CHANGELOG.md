@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+From a blind developer review of a goose-cms site.
+
+- New: `gweb::expect_not_contains(t, text, needle)` and `gweb::expect_no_header(t, res, name)` in route tests. Test: `test/routes.sh`.
+
 ## v1.6.0
 
 Additions and fixes for goose-cms (`NOTES-FOR-GWEB.md`). Proposal for a package's jobs (ask 11): `docs/PROPOSAL-PACKAGE-JOBS.md`.

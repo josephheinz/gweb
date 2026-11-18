@@ -197,6 +197,21 @@ fn expect_contains(t: Tester&, text: const u8[:], needle: const u8[:]) {
     expect(t, find(text, needle) >= 0, msg);
 }
 
+// The opposite of expect_contains (1.7).
+fn expect_not_contains(t: Tester&, text: const u8[:], needle: const u8[:]) {
+    var msg: u8[>..] = [];
+    format(msg, "'", text, "' has '", needle, "'");
+    expect(t, find(text, needle) < 0, msg);
+}
+
+// No header with this name (case-insensitive), as for a reply that must not set a cookie (1.7).
+fn expect_no_header(t: Tester&, res: const http::Response&, name: const u8[:]) {
+    let got, has = header_of(res, name);
+    var msg: u8[>..] = [];
+    format(msg, "header ", name, " is '", got, "', want none");
+    expect(t, !has, msg);
+}
+
 fn expect_header(t: Tester&, res: const http::Response&, name: const u8[:], value: const u8[:]) {
     let got, has = header_of(res, name);
     var msg: u8[>..] = [];
