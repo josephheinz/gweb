@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- New: faster `gweb dev` rebuilds (`docs/dev-builds.md`). A goose-cms site, save to page served: a template text
+  edit 9.6 s to 2.4 s, a new `{#if}` line 10 s to 3.5 s, a Goose edit 9.6 s to 3.2 s. Production builds are
+  unchanged.
+  - Template text of a dev build is read from `.gweb/lits` as the server starts, so a text edit leaves the C as it
+    was and skips the C compile.
+  - The C is split after goose into about four units per hardware thread, compiled at once, each object cached by
+    a hash of what it was compiled from; strings and embedded files are named by content, so an edit recompiles one
+    or two units. `GWEB_DEV_UNITS=0` compiles the C whole; anything unexpected in the C does that too.
+  - Dev binaries are hard links where they can be (macOS checks each new executable on first run), the watcher
+    looks every 100 ms, and a dev server stops in about 20 ms (job runners wait 50 ms, not 250).
+  - A dev build's line shows its steps: `gen 0.04, goose 1.6, cc 0.5 (1 of 63 units), link 0.06`.
+  Test: `test/devbuild.sh`.
+
 ## v1.7.0
 
 From a blind developer review of a goose-cms site. Proposal for a mailer: `docs/PROPOSAL-MAILER.md`.
