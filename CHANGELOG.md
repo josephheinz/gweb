@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.7.0
 
 From a blind developer review of a goose-cms site. Proposal for a mailer: `docs/PROPOSAL-MAILER.md`.
 
