@@ -56,3 +56,11 @@ fn test_upload(t: gweb::Tester&) {
     let r2 = site::post_multipart(t, "/api/upload", none);
     gweb::expect_status(t, r2, 422);
 }
+
+// A header set on res in a page's load is kept, and the page renders.
+fn test_header_from_load(t: gweb::Tester&) {
+    let res = site::get(t, "/preview");
+    gweb::expect_status(t, res, 200);
+    gweb::expect_contains(t, res.body, "preview ok=true");
+    gweb::expect_header(t, res, "cache-control", "no-store");
+}

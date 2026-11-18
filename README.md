@@ -1083,7 +1083,8 @@ fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
 - In `gweb dev` the page also carries the abort text and the source lines around each location, in the
   overlay. Production never shows them. Build errors in the overlay get source lines too.
 - `gweb::done(ctx)` lets a page `fn POST` or `fn load` that took `res` write the whole reply itself
-  (a `Retry-After`, a JSON body); no template renders.
+  (a `Retry-After`, a JSON body); no template renders. Without it the page renders and keeps the headers set on
+  `res`: `http::set_header(res, "Cache-Control", "no-store")` in `load` marks a preview.
 
 ## Loading states
 
