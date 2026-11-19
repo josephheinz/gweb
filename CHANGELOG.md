@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.8.3
 
 From goose-cms round 9 (dx10a, dx10b):
 
