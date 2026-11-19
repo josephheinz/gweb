@@ -584,6 +584,11 @@ fn unknown_fn_hint(msg: const u8[:], path: const u8[:]) -> u8[>..] {
     let pre = "unknown function: ";
     if !starts_with(msg, pre) || find(msg, "(did you mean") >= 0 || find(msg, "add `import") >= 0 { return out; }
     let full = trim(msg[pre.len..]);
+    // goose-cms writes the site:: helpers of each page type and item (children_X, props_X, item_X) into lib/site.goose.
+    if starts_with(full, "site::") && find(msg, "cms check") < 0 {
+        format(out, msg, " (run `cms check`, or gweb dev, first: cms generates the site:: helpers, such as site::children_*, from your views)");
+        return out;
+    }
     var ns: u8[>..] = [];
     var base = full;
     var k = full.len;
@@ -1856,6 +1861,38 @@ fn tool_tree(pkg_dir: const u8[:], file: const u8[:], dst: const u8[:], root: co
     }
 }
 
+// Where a built tool is kept for every app on this machine (1.8.3): ~/.cache/gweb/tools/NAME-HASH, HASH of the tool's key
+// (the release, its sources and the roots it builds from), so a new app on the same goose-cms checkout or tag does not
+// build the tool again. "" when there is no cache folder.
+fn tool_cache_file(name: const u8[:], key: const u8[:]) -> u8[>..] {
+    var base: u8[>..] = [];
+    var v: u8[>..] = [];
+    var out: u8[>..] = [];
+    if env("XDG_CACHE_HOME", v) && v.len > 0 { base.append(v); }
+    else if env("HOME", v) && v.len > 0 { format(base, v, "/.cache"); }
+    else { return out; }
+    var h: u64 = 14695981039346656037;
+    for c in key { h = (h ^ c) * 1099511628211; }
+    var h2: u64 = 1469598103934665603;
+    for c in key { h2 = (h2 ^ (c as u64 + 7)) * 1099511628211; }
+    var dir: u8[>..] = [];
+    format(dir, base, "/gweb/tools");
+    mkdir_p(dir);
+    format(out, dir, "/", name, "-", hex64(h), hex64(h2));
+    return out;
+}
+
+fn hex64(x: u64) -> u8[>..] {
+    var out: u8[>..] = [];
+    var k = 15;
+    while k >= 0 {
+        let d = ((x >> ((k * 4) as u64)) & 15) as i64;
+        out.push(if d < 10 { '0' + d as u8 } else { 'a' + (d - 10) as u8 });
+        k -= 1;
+    }
+    return out;
+}
+
 // Builds .gweb.tools/bin/NAME when it is missing or its sources changed. A git package is a fixed tag, so only
 // the root decides; a path package (or the tool's folder in the app) is stamped by its files, dot folders left out.
 fn ensure_tool(t: const Tool&) -> bool {
@@ -1884,6 +1921,25 @@ fn ensure_tool(t: const Tool&) -> bool {
     var bdir: u8[>..] = [];
     format(bdir, TOOLS_DIR, "/bin");
     mkdir_p(bdir);
+    // Built before, by another app or an earlier checkout of this one: take that binary.
+    let shared = tool_cache_file(t.name, key);
+    if shared.len > 0 && file_exists(shared) {
+        var cp: u8[>..] = [];
+        cp.append("rm -f ");
+        shq(cp, bin);
+        cp.append(" && cp -p ");
+        shq(cp, shared);
+        cp.push(' ');
+        shq(cp, bin);
+        var o: u8[>..] = [];
+        if c_run(cp, o) == 0 {
+            write_file(keyf, key);
+            var m: u8[>..] = [];
+            format(m, "gweb: tool ", t.name, " from the cache\n");
+            write_stdout(m);
+            return true;
+        }
+    }
     if with_views {
         let before = errors;
         if !gen(false, TOOL_GEN) || errors > before {
@@ -1903,7 +1959,7 @@ fn ensure_tool(t: const Tool&) -> bool {
         main_path.append(orig);
     }
     var msg: u8[>..] = [];
-    format(msg, "gweb: building tool ", t.name, " from ", orig, "\n");
+    format(msg, "gweb: building tool ", t.name, " from ", orig, " (once: the binary is kept for other apps)\n");
     write_stdout(msg);
     var cmd: u8[>..] = [];
     goose_cmd(cmd);
@@ -1920,6 +1976,19 @@ fn ensure_tool(t: const Tool&) -> bool {
         return false;
     }
     write_file(keyf, key);
+    if shared.len > 0 {
+        var cp: u8[>..] = [];
+        cp.append("cp -p ");
+        shq(cp, bin);
+        cp.push(' ');
+        shq(cp, shared);
+        cp.append(".tmp && mv -f ");
+        shq(cp, shared);
+        cp.append(".tmp ");
+        shq(cp, shared);
+        var o: u8[>..] = [];
+        c_run(cp, o);
+    }
     return true;
 }
 
@@ -5783,24 +5852,24 @@ let DEV_TIMES = ".cc-times";           // written into .gweb/ by gweb __devcc: w
 let DEV_SERVER = ".gweb.dev/server";   // the last dev binary, kept across gen (which empties .gweb/)
 
 // The dev compiler: a sh script around the C compiler goose would pick (goose toolchain, so GOOSE_CC counts). It
-// compiles the program's own C (GOOSE_HOME/build/prog/*/main.c) at -O0, and when that C and the link inputs are the
+// compiles the program's own C (GOOSE_HOME/build/prog/*/NAME.c) at -O0, and when that C and the link inputs are the
 // ones it compiled last, copies the last binary instead. The runtime and packages' native C build as goose asks;
 // goose keys those objects by the compiler's path, so they build once more for the script. "" when there is no cc.
 let DEV_CC = """
 #!/bin/sh
 # Written by gweb for dev builds (gweb dev, gweb build --dev); rewritten when it differs. See docs/dev-builds.md.
 cc=@CC@
-case "$*" in *"/build/prog/"*"/main.c"*) ;; *) exec "$cc" "$@" ;; esac
+case "$*" in *"/build/prog/"*".c"*) ;; *) exec "$cc" "$@" ;; esac
 src= out= prev=
 for a do
   shift
-  case $a in -O1|-O2|-O3|-Os|-Oz) a=-O0 ;; esac
+  [ -n "$GWEB_CC_KEEP_O" ] || case $a in -O1|-O2|-O3|-Os|-Oz) a=-O0 ;; esac
   [ "$prev" = -o ] && out=$a
-  case $a in */build/prog/*/main.c) src=$a ;; esac
+  case $a in */build/prog/*/*.c) src=$a ;; esac
   prev=$a
   set -- "$@" "$a"
 done
-d=${src%/main.c}
+d=${src%/*}
 { printf '%s\n' "$@"; for a do case $a in @*) cat "${a#@}" ;; esac; done; } > "$d/gweb-key.new" 2>/dev/null
 # The binaries are hard links where they can be (never written in place), since macOS checks each new executable
 # file the first time it runs (about 0.3 s).
@@ -5946,6 +6015,24 @@ fn dev_times(msg: u8[>..]&, hooks: f64, gen_t: f64, goose_t: f64, file: const u8
     }
 }
 
+// GWEB_BUILD_CACHE=0 turns the split, cached C compile off for gweb build, start, export and test (dev builds keep it).
+fn build_cache_on() -> bool {
+    var v: u8[>..] = [];
+    return !(env("GWEB_BUILD_CACHE", v) && trim(v) == "0");
+}
+
+// The words before a goose build that send the program's C through the dev compiler: where it marks an unchanged C,
+// where it writes its times, and gweb itself to split the C. keep_o: keep goose's -O2 instead of the wrapper's -O0.
+fn cc_env(cmd: u8[>..]&, mark: const u8[:], times: const u8[:], keep_o: bool, split: bool) {
+    cmd.append("GWEB_CC_MARK=");
+    shq(cmd, mark);
+    cmd.append(" GWEB_CC_TIMES=");
+    shq(cmd, times);
+    if split { cmd.append(" GWEB_DEVCC="); shq(cmd, self_bin); }
+    if keep_o { cmd.append(" GWEB_CC_KEEP_O=1"); }
+    cmd.push(' ');
+}
+
 fn build(debug: bool, dev: bool) -> bool {
     let t0 = clock();
     last_errors.clear();
@@ -5978,22 +6065,18 @@ fn build(debug: bool, dev: bool) -> bool {
     format(mark, cwd, "/", BUILD_DIR, "/", DEV_MARK);
     var times: u8[>..] = [];
     format(times, cwd, "/", BUILD_DIR, "/", DEV_TIMES);
-    if dev {
-        // The fastest correct C (docs/dev-builds.md): goose -O0, and the C at -O0 through the dev compiler, which
-        // calls this binary back to compile it in parallel units.
-        cmd.append("GWEB_CC_MARK=");
-        shq(cmd, mark);
-        cmd.append(" GWEB_CC_TIMES=");
-        shq(cmd, times);
-        cmd.append(" GWEB_DEVCC=");
-        shq(cmd, self_bin);
-        cmd.push(' ');
+    // A dev build: the fastest correct C (docs/dev-builds.md): goose -O0, and the C at -O0 through the dev compiler,
+    // which calls this binary back to compile it in parallel units. A build or start (1.8.3) takes the same
+    // compiler but keeps -O2: unchanged units are reused, so a rebuild after a small change is seconds, not a minute.
+    let cached = dev || build_cache_on();
+    if cached {
+        cc_env(cmd, mark, times, !dev, dev);
     }
     goose_cmd(cmd);
     cmd.append(" build --color never ");
     if debug { cmd.append("--debug "); }
-    if dev {
-        cmd.append("-O0 ");
+    if dev { cmd.append("-O0 "); }
+    if cached {
         let cc = dev_cc();
         if cc.len > 0 { cmd.append("--cc "); shq(cmd, cc); cmd.push(' '); }
     }
@@ -6028,8 +6111,8 @@ fn build(debug: bool, dev: bool) -> bool {
     var msg: u8[>..] = [];
     format(msg, "gweb: built .gweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
            ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s");
-    if dev && file_exists(mark) { msg.append("; the C was unchanged, so its compile was skipped"); }
-    if dev { dev_times(msg, t_hooks - t0, t_gen - t_hooks, t_goose1 - t_goose0, times); }
+    if cached && file_exists(mark) { msg.append("; the C was unchanged, so its compile was skipped"); }
+    if cached { dev_times(msg, t_hooks - t0, t_gen - t_hooks, t_goose1 - t_goose0, times); }
     msg.push(')');
     if dev {
         // Kept for the next change under public/; gen empties .gweb/.
@@ -6193,8 +6276,20 @@ fn route_tests() -> bool {
     var cwd: u8[>..] = [];
     c_cwd(cwd);
     var cmd: u8[>..] = [];
+    var mark: u8[>..] = [];
+    format(mark, cwd, "/", TEST_DIR, "/", DEV_MARK);
+    var times: u8[>..] = [];
+    format(times, cwd, "/", TEST_DIR, "/", DEV_TIMES);
+    let cached = build_cache_on();
+    if cached { cc_env(cmd, mark, times, true, true); }
     goose_cmd(cmd);
-    cmd.append(" build --color never -o ");
+    cmd.append(" build --color never ");
+    if cached { cmd.append("-O0 "); }
+    if cached {
+        let cc = dev_cc();
+        if cc.len > 0 { cmd.append("--cc "); shq(cmd, cc); cmd.push(' '); }
+    }
+    cmd.append("-o ");
     var bin: u8[>..] = [];
     format(bin, cwd, "/", TEST_DIR, "/routes_test");
     shq(cmd, bin);
@@ -6720,6 +6815,48 @@ fn write_dev_warnings(text: const u8[:]) {
     write_file(".gweb.dev/warnings.txt", text);
 }
 
+// The files the dev server keeps of the requests it is serving (gweb.goose, _dev_serving).
+fn clear_serving() {
+    var names: u8[>..] = [];
+    if !list_dir(".gweb.dev", names) { return; }
+    for n in split(names, '\n') {
+        if !starts_with(n, "serving-") { continue; }
+        var p: u8[>..] = [];
+        format(p, ".gweb.dev/", n);
+        write_file(p, "");
+    }
+}
+
+// After the dev server died by itself: the request it was serving, and what a crash in a handler usually is.
+fn say_dev_crash(status: i32) -> bool {
+    var names: u8[>..] = [];
+    var reqs: u8[>..] = [];
+    if list_dir(".gweb.dev", names) {
+        for n in split(names, '\n') {
+            if !starts_with(n, "serving-") { continue; }
+            var p: u8[>..] = [];
+            var t: u8[>..] = [];
+            format(p, ".gweb.dev/", n);
+            if read_file(p, t) && t.len > 0 { format(reqs, "  ", t, "\n"); }
+        }
+    }
+    var msg: u8[>..] = [];
+    msg.append("gweb dev: the server stopped by itself (");
+    if status < 0 { msg.append("killed or crashed"); } else { format(msg, "exit ", status as i64); }
+    msg.push(')');
+    if reqs.len > 0 {
+        msg.append(" while it was serving:\n");
+        msg.append(reqs);
+        msg.append("gweb dev: if it said `native call stack overflow`: a handler's stack is too big. Large structs such as cms::Doc\n");
+        msg.append("  (about 110 KB each) must not be copied: keep one per handler and pass it by reference (doc: cms::Doc&).\n");
+        msg.append("  For another page, read it with cms::pages or cms::children instead of building a second Doc.\n");
+    } else {
+        msg.push('\n');
+    }
+    write_stderr(msg);
+    return reqs.len > 0;
+}
+
 fn dev(extra: u8[:][:]) {
     // Hidden, for tests: one build, errors.txt written, exit 0 or 1; no server and no watching.
     for a in extra {
@@ -6731,6 +6868,7 @@ fn dev(extra: u8[:][:]) {
         }
     }
     var pid: i64 = -1;
+    var spawned_at = 0.0;
     c_trap_term();       // SIGTERM, SIGINT and SIGHUP stop the server child too, then gweb dev (1.8.1)
     var code = code_stamp();
     var pub = public_stamp();
@@ -6740,6 +6878,8 @@ fn dev(extra: u8[:][:]) {
     hooks_changed_only = true;
     write_dev_warnings(last_warnings);
     if first_ok {
+        clear_serving();
+        spawned_at = clock();
         pid = c_spawn(server_cmd(extra, true));
     } else {
         write_dev_errors(excerpts(last_errors));
@@ -6754,9 +6894,19 @@ fn dev(extra: u8[:][:]) {
             if pid > 0 { c_kill(pid, 15); c_wait(pid, 1); }
             exit(0);
         }
-        if pid > 0 && c_wait(pid, 0) != -2 {
-            write_stderr("gweb dev: the server exited; it starts again on the next change\n");
+        let gone = if pid > 0 { c_wait(pid, 0) } else { -2 };
+        if pid > 0 && gone != -2 {
             pid = -1;
+            let quick = clock() - spawned_at < 1.0;
+            let in_request = say_dev_crash(gone);
+            if quick && !in_request {
+                write_stderr("gweb dev: the server exited right after it started; it starts again on the next change\n");
+            } else {
+                write_stderr("gweb dev: starting the server again\n");
+                clear_serving();
+                spawned_at = clock();
+                pid = c_spawn(server_cmd(extra, true));
+            }
         }
         if code_stamp() == code && public_stamp() == pub { continue; }
         sleep_ms(50);          // let an editor finish writing
@@ -6776,6 +6926,8 @@ fn dev(extra: u8[:][:]) {
         ok_code = code;
         write_dev_errors("");
         if pid > 0 { c_kill(pid, 15); c_wait(pid, 1); }
+        clear_serving();
+        spawned_at = clock();
         pid = c_spawn(server_cmd(extra, true));
     }
 }
@@ -7167,7 +7319,7 @@ usage: gweb [-C dir] <command> [flags]
   build [--debug]   gen, then goose build to .gweb/server; --dev builds what gweb dev runs (fast, unoptimized C;
                     public/ read from disk, so run it from the project folder)
   start [flags]     build, then run the server (see the server flags below)
-  dev [flags]       build, run on 127.0.0.1:60053, and rebuild on every change under app/, lib/, public/,
+  dev [flags]       build, run on 127.0.0.1:60053 (--port N for another), and rebuild on every change under app/, lib/, public/,
                     components/, locales/, stores/ and views/ (and in path packages); --host 0.0.0.0 opens it to the network
   export [-o DIR]   build, then write the site as static files to DIR (default out/)
   routes            print the route table

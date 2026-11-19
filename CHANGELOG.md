@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+From goose-cms round 9 (dx10a, dx10b):
+
+- `gweb test` and `gweb build` go through the dev compiler's cache (`docs/dev-builds.md`): a build whose C is the same as the last one links the last binary (`gweb build` after a change to `tests/` only, or `gweb test` with nothing changed: 3 to 5 s, was 55 s). `gweb test` builds with goose `-O0` and the C split in units compiled in parallel at `-O2`, so a change to a test compiles a few units (first build about 10 s, was 47 s). `GWEB_BUILD_CACHE=0` brings back the one-file build. The compiler wrapper also takes C that goose names other than `main.c`.
+- Tools (`tool cms cli/cms.goose` and the like) are kept in `~/.cache/gweb/tools/`, keyed by their sources: a new app on the same goose-cms checkout or tag takes the binary (the `cms check` hook of a first `gweb dev`: 20 s, now under 1 s).
+- `gweb dev`: when the server dies while serving a request (a handler's native stack overflow, for one) it names the request, says what such a crash usually is (a large struct such as `cms::Doc` copied; pass it by reference), and starts the server again. The dev server records the request in flight in `.gweb.dev/serving-N`.
+- `gweb help` lists `--port` for dev. `gweb check`: an unknown `site::...` function says to run `cms check` first. A failed `expect_status` and `expect_contains` name the request (`GET shop.localhost/path`; `Tester.last`). A dev build's server started outside its folder says to use `gweb build` for a portable one.
+- Docs: `docs/site/goose-for-site-developers.md`, a cheat sheet of the slips a site developer makes (no `?:`, text comparison, casts, `parse_int`, re-binding a `var`, struct literal order, void calls in templates).
+
 ## v1.8.2
 
 From goose-cms round 8:

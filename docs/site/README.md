@@ -22,6 +22,7 @@ Guides:
 - [Packages](packages.md)
 - [Building a CMS on gweb](building-a-cms.md): a package with its own admin, views and media
 - [Editor support](editor.md)
+- [Goose for site developers](goose-for-site-developers.md): the slips of a first week, with the fix for each
 
 Policy:
 

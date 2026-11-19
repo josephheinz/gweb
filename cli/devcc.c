@@ -437,7 +437,7 @@ int32_t gweb_devcc(gweb_bytes cc_b, gweb_bytes args_b, int64_t units, gweb_bytes
     for (size_t i = 0; i < na; i++) {
         size_t l = strlen(args[i]);
         if (strcmp(args[i], "-o") == 0 && i + 1 < na) out = args[i + 1];
-        if (l > 7 && strcmp(args[i] + l - 7, "/main.c") == 0 && strstr(args[i], "/build/prog/")) src = args[i];
+        if (l > 2 && strcmp(args[i] + l - 2, ".c") == 0 && strstr(args[i], "/build/prog/")) src = args[i];
         if (strcmp(args[i], "-c") == 0 || strcmp(args[i], "-E") == 0 || strcmp(args[i], "-S") == 0) BAIL(2);
     }
     if (!src || !out) BAIL(2);
@@ -668,7 +668,7 @@ int32_t gweb_devcc(gweb_bytes cc_b, gweb_bytes args_b, int64_t units, gweb_bytes
         u[j] = w;
     }
 
-    /* The files, beside goose's main.c. */
+    /* The files, beside goose's C file. */
     char dir[4096], path[4096];
     snprintf(dir, sizeof dir, "%.*s/gweb-units", (int)(strrchr(src, '/') - src), src);
     mkdir(dir, 0755);

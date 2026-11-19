@@ -26,12 +26,12 @@ gweb help                    the usage
 |---|---|
 | `new` | writes a starter project, with a `.gitignore`, a `Dockerfile` and a `.dockerignore`. The folder must be empty or missing. |
 | `gen` | writes `.gweb/` and stops. |
-| `build` | builds `.gweb/server`. `--debug` is passed to `goose build`. `--dev` builds what `gweb dev` runs: unoptimized C, `public/` read from disk (run it from the project folder). |
+| `build` | builds `.gweb/server`. `--debug` is passed to `goose build`. A build whose C is the same as the last one (a change to `tests/` only) links the last binary: seconds, not a minute (`GWEB_BUILD_CACHE=0` turns that off). `--dev` builds what `gweb dev` runs: unoptimized C, `public/` read from disk (run it from the project folder). |
 | `start` | builds and runs `.gweb/server`. The flags after `start` go to the server (below). |
 | `dev` | like `start`, with the dev defaults below. Rebuilds on change under `app/`, `lib/`, `public/`, `components/`, `locales/`, `stores/` and `views/`, and in path packages (the same folders but `locales/`). |
 | `export` | builds, then renders the site in process and writes it to `-o DIR` (default `out/`): HTML files, static files, `sitemap.xml`, `robots.txt`. No port. Run it with `SITE_URL` set. |
 | `routes` | prints the route table, with a `frag` line for each fragment. |
-| `test` | runs each component's `test_*` functions as Goose and as JavaScript (needs `node`), then every `tests/*.goose` route test with the app's real dispatcher. Writes `.gweb.test/`. |
+| `test` | runs each component's `test_*` functions as Goose and as JavaScript (needs `node`), then every `tests/*.goose` route test with the app's real dispatcher. Writes `.gweb.test/`. The first build takes about 10 s; later ones reuse what a change left alone (3 to 5 s). The test binary is built with goose `-O0`: for timings of an optimized server use `GWEB_BUILD_CACHE=0`. |
 | `check` | generates into `.gweb.check/` and runs `goose check`. Errors name `.gshtml`, `.html` and app `.goose` lines. Exit 1 on any error. |
 | `lsp` | runs the language server over stdio. Needs `node`. See [Editor support](editor.md). |
 | `run` | runs a `run NAME COMMAND` line (see [Packages](packages.md#commands-and-hooks)) with the arguments after it, and exits with its status. Alone, lists them. |

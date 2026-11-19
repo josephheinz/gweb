@@ -1205,7 +1205,12 @@ fn _respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Co
         http::json_error(res, http::Status.InternalServerError, "csp nonce unavailable");
         return -1, false;
     }
+    // gweb dev (1.8.3): the request in flight is in .gweb.dev/serving-WORKER, so when the server dies in a handler (a
+    // native stack overflow cannot be caught) gweb dev can say which request it was. Emptied when the handler returns.
+    var mark: u8[..40] = "";
+    if cfg.dev_id != 0 { _dev_serving(mark, ctx.worker, req); }
     var static_index = D(req, ctx, res);
+    if mark.len > 0 { write_file(mark, ""); }
     _fold_content_type(res);
     if !_csrf_end(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
     if !_apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
@@ -1351,6 +1356,14 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
 // ---------------------------------------------------------------- dev live reload
 
 // Line 1 is the build id; the rest is gweb dev's last build errors (empty after a good build).
+fn _dev_serving(mark: u8[..40]&, worker: i64, req: const http::Request&) {
+    format(mark, ".gweb.dev/serving-", worker);
+    var line: u8[>..] = [];
+    format(line, if req.method == http::Method.Post { "POST " } else if req.method == http::Method.Get { "GET " } else if req.method == http::Method.Head { "HEAD " } else { "request " }, req.path);
+    if req.query.len > 0 { format(line, "?", req.query[..min(req.query.len, 200)]); }
+    write_file(mark, line);
+}
+
 fn _dev_status(res: http::Response&, dev_id: i64) {
     http::text(res, http::Status.Ok, "");
     format(res.body, dev_id);
@@ -1404,7 +1417,7 @@ extern fn c_dev_lit(tpl: i64, id: i64, out: u8[>..]&) = "gweb_dev_lit";
 // run N.
 fn _dev_lits_load() {
     if c_dev_lits_load(".gweb/lits") < 0 {
-        print("gweb: cannot read .gweb/lits: start a dev build's server from its project folder");
+        print("gweb: cannot read .gweb/lits: this server was built by gweb dev (or build --dev), which runs only from its project folder.\nFor a server you can run anywhere, build it with `gweb build`.");
         exit(2);
     }
 }

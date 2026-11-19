@@ -17,7 +17,8 @@ let FORM_HEX = "0123456789ABCDEF";
 struct Tester { failures: i64 = 0, checks: i64 = 0, name: u8[..128] = "",
                 auto_csrf: bool = true, headers: u8[..2048] = "",
                 cookies: u8[..4096] = "", host: u8[..128] = "test",
-                client_ip: u8[..64] = "", trust_proxy: bool = false, upload_dir: u8[..256] = ".gweb.test/uploads", mails: u8[..16384] = "" }
+                client_ip: u8[..64] = "", trust_proxy: bool = false, upload_dir: u8[..256] = ".gweb.test/uploads", mails: u8[..16384] = "",
+                last: u8[..256] = "" }   // last: "GET main.localhost/path", the request the next expect_status and expect_contains name (1.8.3)
 
 // Moves the messages mail_send logged since the last call into t.mails; each request and each test does it, so call it
 // after a mail_send of your own.
@@ -122,6 +123,11 @@ fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: 
         if !has { _jar_put(t, "gw_csrf", TEST_CSRF, true); }
     }
     var raw: u8[>..] = [];
+    t.last.clear();
+    t.last.append(method);
+    t.last.push(' ');
+    t.last.append(t.host);
+    t.last.append(target[..min(target.len, t.last.cap - t.last.len)]);
     format(raw, method, " ", target, " HTTP/1.1\r\nHost: ", t.host, "\r\n");
     if t.cookies.len > 0 { format(raw, "Cookie: ", t.cookies, "\r\n"); }
     if t.auto_csrf && method != "GET" {
@@ -198,15 +204,18 @@ fn expect_eq(t: Tester&, got: i64, want: i64, what: const u8[:]) {
 }
 
 fn expect_status(t: Tester&, res: const http::Response&, code: i64) {
-    var msg: u8[..64] = "";
+    var msg: u8[..384] = "";
     format(msg, "status ", http::code(res.status), ", want ", code);
+    if t.last.len > 0 { format(msg, " (", t.last, ")"); }
     expect(t, http::code(res.status) == code, msg);
 }
 
 fn expect_contains(t: Tester&, text: const u8[:], needle: const u8[:]) {
     if find(text, needle) >= 0 { expect(t, true, ""); return; }
     var msg: u8[>..] = [];
-    format(msg, "lacks '", needle, "' in ", text.len, " bytes: '", _excerpt(text), "'");
+    format(msg, "lacks '", needle, "' in ", text.len, " bytes");
+    if t.last.len > 0 { format(msg, " of ", t.last); }
+    format(msg, ": '", _excerpt(text), "'");
     expect(t, false, msg);
 }
 

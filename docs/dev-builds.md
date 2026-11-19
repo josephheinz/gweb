@@ -1,6 +1,6 @@
 # Dev builds
 
-`gweb dev` and `gweb build --dev` build for speed; `gweb build`, `start` and `export` are unchanged.
+`gweb dev` and `gweb build --dev` build for speed. `gweb build`, `start` and `export` keep goose's `-O2` and one C file, but link the last binary when the C is the same as the last build's (1.8.3: a change to `tests/` or to a comment is not in the C); `gweb test` uses the split, cached compile with `-O0` goose and the C at `-O2`. `GWEB_BUILD_CACHE=0` turns both off. The same cache keeps tools (`tool NAME ...` lines of `gweb.packages`) in `~/.cache/gweb/tools/`, so a new app does not build the cms tool again.
 
 - **Fast C.** `goose build -O0` (no Goose inlining), and the program's C at `cc -O0` through a wrapper that gweb
   writes to `~/.cache/gweb/cc-HASH/cc` around the compiler `goose toolchain` names (so `GOOSE_CC` counts). The
