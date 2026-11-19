@@ -73,6 +73,13 @@ check "$([ "$(count "$out" 'app/page.html:3:5: error:')" = 1 ] && ! printf '%s\n
 "$GWEB" -C "$WORK/bad" dev --once >/dev/null 2>&1
 check "$([ "$(grep -c '^app/page.html:3:5: error:' "$WORK/bad/.gweb.dev/errors.txt")" = 1 ] && grep -qF '>   3 | <p>{props.nosuch}</p>' "$WORK/bad/.gweb.dev/errors.txt" && echo ok)" \
   "dev --once: errors.txt has each error once, with its excerpt"
+# The dev banner after a failed first build names every folder it watches, views/ and locales/ among them.
+"$GWEB" -C "$WORK/bad" dev --port "$PORT" >"$WORK/badbanner.out" 2>&1 &
+BADPID=$!
+for i in $(seq 1 120); do grep -q 'fix the errors above' "$WORK/badbanner.out" 2>/dev/null && break; sleep 0.5; done
+kill "$BADPID" 2>/dev/null; wait "$BADPID" 2>/dev/null
+check "$(grep -qF 'watching app/, lib/, components/, locales/, stores/, views/ and public/' "$WORK/badbanner.out" && echo ok)" \
+  "the dev banner names views/ and locales/: $(grep 'fix the errors' "$WORK/badbanner.out")"
 # A long template line: an excerpt around the column, not the whole line.
 fresh long
 pad=$(printf 'word %.0s' $(seq 1 30))

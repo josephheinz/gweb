@@ -4,6 +4,10 @@
 
 - A view with `@slot` may hold `gweb::Text`, `gweb::LongText`, a repeater (`T[>..<]`) or a foreign growable type (`cms::RichText`) in its Props. These failed `gweb build` in generated code (`types_render calls into its recursive cycle while non-fixed-size local p ... (§7.8)`), and `gweb gen` refused the text types. The view's `render` now takes the props JSON and reads the Props in each piece of the template between slots, so none is held across the slot. A slot inside `{#if}` or `{#for}` in such a view is a build error at the slot; `{#let}`/`{#var}` do not carry across a slot. See `docs/DESIGN-ADDENDUM-22-TEXT.md`. Test: `test/slotprops.sh`.
 
+From goose-cms round 11 (dx11b):
+
+- `gweb dev`: the message after a failed first build names every folder it watches, `views/` and `locales/` included (it did already watch them).
+
 ## v1.8.3
 
 From goose-cms round 9 (dx10a, dx10b):

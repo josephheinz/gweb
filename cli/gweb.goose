@@ -6894,7 +6894,7 @@ fn dev(extra: u8[:][:]) {
         pid = c_spawn(server_cmd(extra, true));
     } else {
         write_dev_errors(excerpts(last_errors));
-        write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/, components/ and stores/\n");
+        write_stderr("gweb dev: fix the errors above; watching app/, lib/, components/, locales/, stores/, views/ and public/\n");
     }
     // The package folders and hooks were not known before the first build.
     if pkgs.len > 0 || hooks.len > 0 || hooks_ran { code = code_stamp(); pub = public_stamp(); }
