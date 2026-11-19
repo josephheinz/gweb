@@ -204,16 +204,26 @@ fn expect_status(t: Tester&, res: const http::Response&, code: i64) {
 }
 
 fn expect_contains(t: Tester&, text: const u8[:], needle: const u8[:]) {
+    if find(text, needle) >= 0 { expect(t, true, ""); return; }
     var msg: u8[>..] = [];
-    format(msg, "'", text, "' lacks '", needle, "'");
-    expect(t, find(text, needle) >= 0, msg);
+    format(msg, "lacks '", needle, "' in ", text.len, " bytes: '", _excerpt(text), "'");
+    expect(t, false, msg);
+}
+
+// The start of text, at most 200 bytes, with "..." when it is longer: what a failed expect prints of a whole body.
+fn _excerpt(text: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    out.append(text[..min(text.len, 200)]);
+    if text.len > 200 { out.append("..."); }
+    return out;
 }
 
 // The opposite of expect_contains (1.7).
 fn expect_not_contains(t: Tester&, text: const u8[:], needle: const u8[:]) {
+    if find(text, needle) < 0 { expect(t, true, ""); return; }
     var msg: u8[>..] = [];
-    format(msg, "'", text, "' has '", needle, "'");
-    expect(t, find(text, needle) < 0, msg);
+    format(msg, "has '", needle, "' in ", text.len, " bytes: '", _excerpt(text), "'");
+    expect(t, false, msg);
 }
 
 // No header with this name (case-insensitive), as for a reply that must not set a cookie (1.7).
