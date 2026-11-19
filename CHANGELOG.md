@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.8.5
 
 - A failed `expect_contains` reads "body does not contain 'X' (N bytes of GET host/path): '...'", not "lacks 'X' in N bytes" (goose-cms round 15, dx13b: it read as if the check lacked something).
 
