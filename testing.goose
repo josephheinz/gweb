@@ -213,9 +213,9 @@ fn expect_status(t: Tester&, res: const http::Response&, code: i64) {
 fn expect_contains(t: Tester&, text: const u8[:], needle: const u8[:]) {
     if find(text, needle) >= 0 { expect(t, true, ""); return; }
     var msg: u8[>..] = [];
-    format(msg, "lacks '", needle, "' in ", text.len, " bytes");
+    format(msg, "body does not contain '", needle, "' (", text.len, " bytes");
     if t.last.len > 0 { format(msg, " of ", t.last); }
-    format(msg, ": '", _excerpt(text), "'");
+    format(msg, "): '", _excerpt(text), "'");
     expect(t, false, msg);
 }
 

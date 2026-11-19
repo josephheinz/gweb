@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A failed `expect_contains` reads "body does not contain 'X' (N bytes of GET host/path): '...'", not "lacks 'X' in N bytes" (goose-cms round 15, dx13b: it read as if the check lacked something).
+
 ## v1.8.4
 
 - A view with `@slot` may hold `gweb::Text`, `gweb::LongText`, a repeater (`T[>..<]`) or a foreign growable type (`cms::RichText`) in its Props. These failed `gweb build` in generated code (`types_render calls into its recursive cycle while non-fixed-size local p ... (§7.8)`), and `gweb gen` refused the text types. The view's `render` now takes the props JSON and reads the Props in each piece of the template between slots, so none is held across the slot. A slot inside `{#if}` or `{#for}` in such a view is a build error at the slot; `{#let}`/`{#var}` do not carry across a slot. See `docs/DESIGN-ADDENDUM-22-TEXT.md`. Test: `test/slotprops.sh`.
