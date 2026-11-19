@@ -1,7 +1,7 @@
 /* gweb's dev C compile (docs/dev-builds.md): the program's one C file from goose, split after goose into a shared
    header and units of function bodies, the units compiled in parallel at -O0, each object kept by a hash of what
-   it was compiled from, and the objects linked as goose would link main.c. Dev builds only; `gweb build` never
-   comes here. Any surprise in the C (a layout this file does not know) returns nonzero, and the dev compiler then
+   it was compiled from, and the objects linked as goose would link main.c. Dev builds and gweb test (goose -O0)
+   only; `gweb build` keeps goose's -O2 C whole, and only reuses the last binary. Any surprise in the C (a layout this file does not know) returns nonzero, and the dev compiler then
    compiles the C as one file, as before. POSIX only.
 
    The split, from what goose emits (goose -o, GS_SEPARATE_RUNTIME):
