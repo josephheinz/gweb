@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.8.2
+
+From goose-cms round 8:
+
+- `expect_contains` that fails prints the needle and a 200-byte excerpt of the body, not the whole body.
+
 ## v1.8.1
 
 From goose-cms round 7 (D9):
