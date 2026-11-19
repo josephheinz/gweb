@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.8.6
+
+From goose-cms round 17 (dx14a):
+
+- `const CSRF_PUBLIC = true;` in a page's `page.goose` with a `fn POST` lets that POST pass with the public form token (`_csrf_pub` equal to the `gw_csrf_pub` cookie, still refused when Sec-Fetch-Site says cross-site). Every other POST keeps the per-visitor `gw_csrf` check. For forms on cached pages that must work without JavaScript, where a forged post harms nobody. Test: `test/csrf_test.goose`.
+- Template tags may span lines.
+- `gweb test` no longer prints mail bodies; `gweb test -v` does.
+- `gweb dev` writes the port it serves on to `.gweb.dev/port`.
+- Docs: `.push` for one element, `.append` for an array or slice (`docs/site/goose-for-site-developers.md`); multi-line tags (`docs/site/templates.md`).
+
 ## v1.8.5
 
 - A failed `expect_contains` reads "body does not contain 'X' (N bytes of GET host/path): '...'", not "lacks 'X' in N bytes" (goose-cms round 15, dx13b: it read as if the check lacked something).
