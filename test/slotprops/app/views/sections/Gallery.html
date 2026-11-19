@@ -1,0 +1,1 @@
+<section><h2>{props.heading}</h2><ul>{#for it in props.items}<li>{it.name}</li>{/for}</ul><div class="a">@slot("a")</div><p>after {props.heading}</p><div class="b">@slot("b")</div><footer>{props.items.len}</footer></section>

@@ -29,7 +29,7 @@ struct Fld { owner: u8[..64], name: u8[..64], kind: i64, cap: i64, ty: u8[..96],
              label: u8[..64], help: u8[..200], editor: u8[..32], chars: bool, long: bool }
 
 // ns is v_<group>_<name>; meta_s..meta_e is the view's piece of meta_text.
-struct View { group: u8[..32], name: u8[..64], goose: u8[..512], html: u8[..512], ns: u8[..120], meta_s: i64, meta_e: i64 }
+struct View { group: u8[..32], name: u8[..64], goose: u8[..512], html: u8[..512], ns: u8[..120], meta_s: i64, meta_e: i64, seg: bool }
 
 var views: View[>..<];
 var fields: Fld[>..<];               // every parsed struct field of the view being generated
@@ -87,7 +87,7 @@ fn scan_in(base: const u8[:]) {
                 continue;
             }
             if is_html { continue; }
-            var v = View { group: "", name: "", goose: "", html: "", ns: "", meta_s: 0, meta_e: 0 };
+            var v = View { group: "", name: "", goose: "", html: "", ns: "", meta_s: 0, meta_e: 0, seg: false };
             v.group.append(g);
             v.name.append(n);
             if path.len >= 512 || twin.len >= 512 { err(path, 0, "path too long"); continue; }
@@ -804,6 +804,32 @@ fn check_item_label(src: const u8[:], code: const u8[:]) {
     item_label_field.append(name);
 }
 
+// Whether the view's template is rendered in pieces between its slots: it has @slot and its Props holds gweb::Text, a
+// repeater (any such field, in a fieldset too) or a foreign type, which may be growable. A foreign type alone does not
+// do it when a slot is inside {#if} or {#for}: that cannot be cut, and the type may be fixed-size.
+fn slot_pieces(v: const View&) -> bool {
+    var src: u8[>..] = [];
+    if !read(v.html, src) || find(src, "@slot(") < 0 { return false; }
+    var sure = false;
+    var maybe = false;
+    for f in fields {
+        if f.chars || f.kind == K_LIST { sure = true; }
+        if f.kind == K_FOREIGN { maybe = true; }
+    }
+    if sure { return true; }
+    if !maybe { return false; }
+    var open = 0;
+    var i = 0;
+    while i < src.len {
+        let rest = src[i..];
+        if starts_with(rest, "{#if ") || starts_with(rest, "{#for ") { open += 1; }
+        else if starts_with(rest, "{/if}") || starts_with(rest, "{/for}") { open -= 1; }
+        else if starts_with(rest, "@slot(") && open > 0 { return false; }
+        i += 1;
+    }
+    return true;
+}
+
 // Generates the view's namespace file and its template. Returns false after reporting.
 fn gen_view(v: View&) -> bool {
     var code: u8[>..] = [];
@@ -920,25 +946,16 @@ fn parse(req: const http::Request&, prefix: const u8[:], out: u8[>..]&, errs: gw
     format(base, v.ns, "_html");
     view_group.clear(); view_group.append(v.group);
     view_name.clear(); view_name.append(v.name);
+    // A view with @slot renders the views inside it, and Goose keeps no growable local across that recursion (spec 7.8).
+    // So when its Props holds text, a repeater or a foreign type, the dispatcher does not read the Props: render takes
+    // the JSON and reads the Props again in each piece of the template between two slots.
+    v.seg = slot_pieces(v);
+    tpl_seg = v.seg;
     gen_template(v.html, v.ns, base,
-                 "fn render<Z, D>(out: u8[>..]&, req: const http::Request&, ctx: const gweb::Ctx&, props: const Props&, doc: const D&, at: i64)",
+                 if v.seg { "fn render<Z, D>(out: u8[>..]&, req: const http::Request&, ctx: const gweb::Ctx&, props_json: const u8[:], doc: const D&, at: i64)" }
+                 else { "fn render<Z, D>(out: u8[>..]&, req: const http::Request&, ctx: const gweb::Ctx&, props: const Props&, doc: const D&, at: i64)" },
                  imports, K_VIEW, -1, frags);
-    // A view with @slot renders the views inside it while its Props is in scope, and Goose keeps no growable local
-    // across that recursion (spec 7.8), so its text is u8[..N].
-    var slotted = false;
-    for l in split(view_slots, '\n') {
-        let parts = split(l, '\t');
-        if parts.len == 4 && parts[0] == v.group && parts[1] == v.name { slotted = true; }
-    }
-    if slotted {
-        for f in fields {
-            if f.owner == "Props" && f.chars {
-                var m: u8[>..] = [];
-                format(m, "a view with @slot cannot hold ", f.ty, ": its Props stays on the stack while the slot renders the views inside it; use u8[..N]");
-                err(v.goose, f.line, m);
-            }
-        }
-    }
+    tpl_seg = false;
     return errors == before;
 }
 
@@ -1016,6 +1033,8 @@ fn gen_group(m: u8[>..]&, g: const u8[:], a: i64, b: i64) {
     format(m, "fn ", g, "_render<Z, D>(out: u8[>..]&, req: const http::Request&, ctx: const gweb::Ctx&, name: const u8[:], props_json: const u8[:],\n",
            "                       doc: const D&, at: i64) -> bool {\n    let i = ", g, "_index(name);\n");
     for k in a..b {
+        // A view that reads its own Props between its slots holds none here (spec 7.8).
+        if views[k].seg { format(m, "    if i == ", k - a, " { ", views[k].ns, "::render(out, req, ctx, props_json, doc, at, Z); return true; }\n"); continue; }
         format(m, "    if i == ", k - a, " { var p = ", views[k].ns, "::Props { .. }; ", views[k].ns, "::read(props_json, p); ",
                views[k].ns, "::render(out, req, ctx, p, doc, at, Z); return true; }\n");
     }

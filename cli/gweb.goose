@@ -159,6 +159,8 @@ var view_name: u8[..64];
 var tpl_boost = false;
 var tpl_trans = false;
 var tpl_sse = false;
+var tpl_seg = false;                 // a view whose Props holds nonfixed data and whose template has @slot: Props is read again after each slot
+var tpl_in_block = false;            // the tag being compiled is inside {#if} or {#for}
 var tpl_query = false;
 var last_errors: u8[>..];
 var test_files: u8[..80][>..<];        // t_<name>, one per tests/<name>.goose
@@ -3258,9 +3260,16 @@ fn view_slot(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
     if count >= 8 { err(path, ln, "a view has at most 8 slots"); return; }
     format(view_slots, view_group, "\t", view_name, "\t", name, "\t", trim(allow), "\n");
     if view_group == "layouts" && (tpl_script || tpl_boost || tpl_trans || tpl_sse) { script_tag(out); }
+    if tpl_seg && tpl_in_block {
+        err(path, ln, "@slot inside {#if} or {#for} of a view that holds gweb::Text, a repeater or a foreign type: its Props is read again after each slot, so a slot belongs at the top of the template");
+        return;
+    }
+    // Props is a local of the piece between two slots, so no growable local is in scope at the call (spec 7.8).
+    if tpl_seg { out.append("} "); }
     out.append("Z(out, req, ctx, doc, at, \"");
     lit(out, name);
     out.append("\"); ");
+    if tpl_seg { out.append("{ var props = Props { .. }; read(props_json, props); "); }
 }
 
 fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&,
@@ -3393,6 +3402,7 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     tpl_sse = find(src, "gw-sse") >= 0;
     if tpl_sse { uses_sse = true; }
     out.append(header);
+    if tpl_seg { out.append("{ var props = Props { .. }; read(props_json, props); "); }
     if wrap { out.append("if gw_part == 0 { "); }
     if (tpl_script || tpl_boost || tpl_trans || tpl_sse) && kind != K_LAYOUT { script_tag(out); }
     var stack: u8[>..] = [];      // 'i' for if, 'f' for for, 'g' for fragment
@@ -3436,6 +3446,7 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
                 var in_frag = false;
                 for c in stack { if c == 'g' { in_frag = true; } }
                 let args = line[open + 1..close];
+                tpl_in_block = stack.len > 0;
                 template_call(path, ln, name, trim(args), kind, in_frag, out, segs, at + 1, open + 1 + lead_ws(args));
                 pos = close + 1;
                 continue;
@@ -3462,7 +3473,7 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
             emit_text_run(out, text);
         }
         if segs.len > 0 { format(recs, "L ", ln, " ", ln, segs, "\n"); }
-        if last { out.append(if wrap { "} }" } else { "}" }); }
+        if last { out.append(if wrap { "} }" } else if tpl_seg { "} }" } else { "}" }); }
         out.push('\n');
     }
     if stack.len > 0 {

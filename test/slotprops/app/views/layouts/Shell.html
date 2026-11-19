@@ -1,0 +1,3 @@
+<html><head><title>{props.title}</title></head><body><nav>{#for l in props.nav}<a href="{l.href}">{l.text}</a>{/for}</nav>
+@slot("body")
+<footer>{props.title} ({props.nav.len})</footer></body></html>

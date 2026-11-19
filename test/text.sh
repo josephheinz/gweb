@@ -55,13 +55,12 @@ expect_fail read_errs 'fn read_errs is generated for every view; rename yours' \
 expect_fail label_int 'ITEM_LABEL: "n" is not a text field of I (nor an enum or ns::T field)' \
   'import std;\nlet ITEM_LABEL = "n";\nstruct I { n: i64 = 0 }\nstruct Props { l: I[>..<] }\n'
 
-# A view with @slot keeps u8[..N] text.
+# A view with @slot may hold gweb::Text (test/slotprops.sh renders it).
 rm -rf "$WORK/slot"
 cp -R "$HERE/text/app" "$WORK/slot"
 printf 'import std;\nroot struct Props {\n    a: gweb::Text = "",\n}\n' > "$WORK/slot/views/widgets/Tags.goose"
 echo '<div>@slot("main")</div>' > "$WORK/slot/views/widgets/Tags.html"
-if out=$("$GWEB" -C "$WORK/slot" gen 2>&1); then bad "slot: gweb gen succeeded"
-else case "$out" in *'views/widgets/Tags.goose:3: error: a view with @slot cannot hold gweb::Text: its Props stays on the stack while the slot renders the views inside it; use u8[..N]'*) ok ;; *) bad "slot: got:"; show "$out" ;; esac; fi
+if out=$("$GWEB" -C "$WORK/slot" gen 2>&1); then ok; else bad "slot: gweb gen failed:"; show "$out"; fi
 
 # A max above the request limit builds, with a warning.
 rm -rf "$WORK/w"
