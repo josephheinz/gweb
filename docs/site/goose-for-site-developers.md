@@ -38,6 +38,20 @@ out.append("A");
 format(out, " and ", 5, " ", true);              // writes each value as text
 ```
 
+## One element: `.push`, many: `.append`
+
+```goose
+var out: u8[>..] = [];
+out.push('x');                       // one element: a u8 (a character), or one item of any array
+out.append("xyz");                   // many: an array or a slice, such as text
+var ids: i64[>..] = [];
+ids.push(7);                         // one i64
+ids.append(more_ids);                // another array or slice of i64
+```
+
+`.append` takes an array or a slice, never a single element: `out.append('x')` is `.append takes an array or slice of u8, got u8`,
+and `ids.append(7)` the same for i64. The fix is `.push` (`.push(c)` for a character, `.push(item)` for a struct or number).
+
 ## Numbers
 
 ```goose

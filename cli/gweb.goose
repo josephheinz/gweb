@@ -886,11 +886,14 @@ fn emit_component_warnings(w: const u8[:]) {
 }
 
 // Takes gweb's own flags out of rest; the rest of rest is not looked at.
+var test_verbose = false;             // gweb test -v: the mail log transport prints each message (GWEB_TEST_VERBOSE=1 for the test program)
+
 fn parse_flags(rest: u8[:][:], allow_debug: bool) {
     var i = 0;
     while i < rest.len {
         if rest[i] == "--strict" { strict = true; }
         else if rest[i] == "--debug" && allow_debug { debug_flag = true; }
+        else if rest[i] == "-v" || rest[i] == "--verbose" { test_verbose = true; }
         else if rest[i] == "--diagnostics" {
             if i + 1 >= rest.len || rest[i + 1] != "json" { say_error("gweb: --diagnostics takes json"); exit(2); }
             json_diag = true;
@@ -3411,9 +3414,14 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     var slots = 0;
     var raw_line = 0;
     let lines = split(src, '\n');
-    for line, li in lines {
+    var li = -1;
+    var skip_lines = 0;       // the lines a tag spread over (its later lines become empty Goose lines, so line numbers hold)
+    while li + 1 + skip_lines < lines.len {
+        li += 1 + skip_lines;
+        skip_lines = 0;
+        var line: u8[>..] = [];
+        line.append(lines[li]);
         let ln = li + 1;
-        let last = li == lines.len - 1;
         var text: u8[>..] = [];
         var segs: u8[>..] = [];
         var tcol = 0;   // where text starts in line
@@ -3439,8 +3447,10 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
             if line[at] == '}' { err(path, ln, "'}' without '{'; for a literal brace write &#125;"); return false; }
             if line[at] == '@' {
                 let open = tscan::call_open(line, at);
-                let close = tscan::paren_end(line, open);
-                if close < 0 { err(path, ln, "@name( needs its ) on the same line; for a literal @ write &#64;"); return false; }
+                var close = tscan::paren_end(line, open);
+                // A call, a tag or a note may go on over the next lines: they are joined to this one (multi-line tags, gweb 1.8.6).
+                while close < 0 && li + skip_lines + 1 < lines.len { skip_lines += 1; line.push(' '); line.append(lines[li + skip_lines]); close = tscan::paren_end(line, open); }
+                if close < 0 { err(path, ln, "@name( needs its ) on the same line; for a literal @ write &#64; (a tag may go on over the lines that follow, but this one is never closed)"); return false; }
                 let name = line[at + 1..open];
                 if name == "slot" { slots += 1; }
                 var in_frag = false;
@@ -3453,17 +3463,20 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
             }
             if starts_with(rest, "{{") { err(path, ln, tscan::old_syntax(rest)); return false; }
             if starts_with(rest, "{--") {
-                let e = find(rest, "--}");
-                if e < 0 { err(path, ln, "{-- needs --} on the same line"); return false; }
+                var e = find(rest, "--}");
+                while e < 0 && li + skip_lines + 1 < lines.len { skip_lines += 1; line.push(' '); line.append(lines[li + skip_lines]); e = find(line[at..], "--}"); }
+                if e < 0 { err(path, ln, "{-- needs --} on the same line (a note may go on over the lines that follow, but this one is never closed)"); return false; }
                 pos = at + e + 3;
                 continue;
             }
-            let e = tscan::brace_end(line, at);
-            if e < 0 { err(path, ln, "{ needs } on the same line; for a literal brace write &#123;"); return false; }
+            var e = tscan::brace_end(line, at);
+            while e < 0 && li + skip_lines + 1 < lines.len { skip_lines += 1; line.push(' '); line.append(lines[li + skip_lines]); e = tscan::brace_end(line, at); }
+            if e < 0 { err(path, ln, "{ needs } on the same line; for a literal brace write &#123; (a tag may go on over the lines that follow, but this one is never closed)"); return false; }
             template_tag(path, ln, trim(line[at + 1..e]), line, at, e, kind, stack, stack_lines, frags, out, segs);
             pos = e + 1;
         }
         if raw == tscan::MARKUP { raw_line = 0; } else if raw_line == 0 { raw_line = ln; }
+        let last = li + skip_lines == lines.len - 1;
         if !last {
             if text.len == 0 { tcol = line.len; }
             text.push('\n');
@@ -3475,6 +3488,7 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
         if segs.len > 0 { format(recs, "L ", ln, " ", ln, segs, "\n"); }
         if last { out.append(if wrap { "} }" } else if tpl_seg { "} }" } else { "}" }); }
         out.push('\n');
+        for k in skip_lines { out.push('\n'); }
     }
     if stack.len > 0 {
         let top = stack[stack.len - 1];
@@ -6318,6 +6332,7 @@ fn route_tests() -> bool {
     }
     out.clear();
     cmd.clear();
+    if test_verbose { cmd.append("GWEB_TEST_VERBOSE=1 "); }
     shq(cmd, bin);
     let status = c_run(cmd, out);
     write_stdout(out);
@@ -6821,6 +6836,21 @@ fn write_dev_errors(text: const u8[:]) {
     write_file(".gweb.dev/errors.txt", text);
 }
 
+// .gweb.dev/port: the port `gweb dev --port N` was given, for the tools that name the dev address (goose-cms's `cms channel add`).
+// Without --port the file is emptied: the port is the default, or GWEB_PORT / PORT / .env, which those tools read themselves.
+fn write_dev_port(extra: u8[:][:]) {
+    var port: u8[>..] = [];
+    var i = 0;
+    while i < extra.len {
+        if extra[i] == "--port" && i + 1 < extra.len { port.append(trim(extra[i + 1])); i += 1; }
+        else if starts_with(extra[i], "--port=") { port.append(trim(extra[i][7..])); }
+        i += 1;
+    }
+    for c in port { if c < '0' || c > '9' { port.clear(); break; } }
+    make_dir(".gweb.dev");
+    write_file(".gweb.dev/port", port);
+}
+
 fn write_dev_warnings(text: const u8[:]) {
     make_dir(".gweb.dev");
     write_file(".gweb.dev/warnings.txt", text);
@@ -6881,6 +6911,7 @@ fn dev(extra: u8[:][:]) {
     var pid: i64 = -1;
     var spawned_at = 0.0;
     c_trap_term();       // SIGTERM, SIGINT and SIGHUP stop the server child too, then gweb dev (1.8.1)
+    write_dev_port(extra);
     var code = code_stamp();
     var pub = public_stamp();
     write_dev_errors("");
@@ -7334,7 +7365,7 @@ usage: gweb [-C dir] <command> [flags]
                     components/, locales/, stores/ and views/ (and in path packages); --host 0.0.0.0 opens it to the network
   export [-o DIR]   build, then write the site as static files to DIR (default out/)
   routes            print the route table
-  test              component test_* functions as Goose and as JavaScript (they must match), then tests/*.goose route tests
+  test [-v]         component test_* functions as Goose and as JavaScript (they must match), then tests/*.goose route tests (-v: also print the mail the log transport logs)
   check             generate into .gweb.check/ and run goose check; errors name .gshtml and page.html lines
   lsp               run the language server (needs node)
   run [NAME [args]] run a command from gweb.packages or a package (none: list them)

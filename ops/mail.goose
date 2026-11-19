@@ -376,6 +376,11 @@ fn mail_send(ctx: Ctx&, m: const Mail&) -> bool {
     return _mail_deliver(ctx, m, spec, sender, dev);
 }
 
+fn _mail_verbose() -> bool {
+    var v: u8[>..] = [];
+    return env("GWEB_TEST_VERBOSE", v) && trim(v) == "1";
+}
+
 // mail_send with GWEB_MAIL as spec, GWEB_MAIL_FROM as from, and dev for GWEB_ENV=development.
 fn _mail_deliver(ctx: Ctx&, m: const Mail&, spec: const u8[:], from: const u8[:], dev: bool) -> bool {
     var host: u8[>..] = [];
@@ -393,9 +398,12 @@ fn _mail_deliver(ctx: Ctx&, m: const Mail&, spec: const u8[:], from: const u8[:]
     var msg: u8[>..] = [];
     if !mail_build(msg, m, from, time() as i64, err) { return _mail_fail(ctx, err); }
     if kind == MAIL_LOG {
-        var line: u8[>..] = [];
-        format(line, "mail (log transport):\n", msg);
-        _log_message(Level.Info, line);
+        // gweb test keeps the message in t.mails and prints it only with `gweb test -v`: a passing run stays quiet.
+        if !_mail_capture || _mail_verbose() {
+            var line: u8[>..] = [];
+            format(line, "mail (log transport):\n", msg);
+            _log_message(Level.Info, line);
+        }
         if _mail_capture { _mail_out.append(msg[..min(msg.len, _mail_out.cap - _mail_out.len)]); }
         return true;
     }

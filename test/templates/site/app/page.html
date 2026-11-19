@@ -4,6 +4,10 @@ h1 { color: {props.url}; }
 @media(max-width: 5px) { h1 { margin: 0 } }
 </style>
 <p>@user joe@Example.com $38.61 ${props.b.n} @ (x) @util::stars(props.b.n) @util::hr()</p>
+<p class="ml">{#if props.b.n > 2
+   && props.b.n < 99}in{#else}out{/if} @util::stars(
+   props.b.n) {-- a note
+   over two lines --}</p>
 <p>{if props.b.n > 2 { "}}" } else { "{" }} {'}' as i64} &#123;x&#125; {#raw props.url}</p>
 <script
   data-u="{props.url}" src="{props.url}">

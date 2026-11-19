@@ -33,8 +33,9 @@ The compiler type-checks them, so a wrong field name is a build error.
 
 - In scope: `req`, `ctx`, `props` (when `load` exists), and what `page.goose`
   imports.
-- A tag stays on one line. Each HTML line compiles to one Goose line, so
-  compiler errors point at your HTML line.
+- A tag may go on over several lines (1.8.6): `{#if a &&\n b}`, `@f(a,\n b)` and `{-- a\n note --}` are joined and
+  compile to one Goose line, the lines after it empty, so compiler errors still point at your HTML line (the first
+  line of the tag). Inside a tag the line breaks count as spaces. Components (`.gshtml`) keep a tag on one line.
 - A literal brace is `&#123;` or `&#125;`. A literal `@` before `name(` is
   `&#64;`.
 - Inside `<script>` and `<style>` nothing is a tag. The text passes
