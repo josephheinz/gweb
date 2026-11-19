@@ -53,6 +53,19 @@ fn run(method: const u8[:], headers: const u8[:][:], body: const u8[:], res: htt
     return gweb::_csrf_ok(req, ctx, res);
 }
 
+// The same with gweb::_csrf_ok_public (a page that says const CSRF_PUBLIC = true;).
+fn run_public(method: const u8[:], headers: const u8[:][:], body: const u8[:]) -> bool {
+    var res = http::new_response();
+    var raw: u8[>..] = [];
+    format(raw, method, " / HTTP/1.1\r\nHost: a\r\n");
+    for h in headers { format(raw, h); }
+    format(raw, "Content-Length: ", body.len, "\r\n\r\n", body);
+    let req, parsed = http::parse_request(raw);
+    if parsed != http::Read.Ready { failures += 1; print("FAIL request did not parse: ", raw); }
+    var ctx = gweb::_new_ctx(0, -1);
+    return gweb::_csrf_ok_public(req, ctx, res);
+}
+
 // Proxy trust on: X-Forwarded-Proto counts.
 fn verdict(method: const u8[:], headers: const u8[:][:], body: const u8[:]) -> bool {
     var res = http::new_response();
@@ -242,6 +255,17 @@ fn main() {
     check(verdict_untrusted("POST", ["X-Forwarded-Proto: https\r\n", COOKIE, HEADER], ""), "plain cookie passes when the proxy header is not trusted");
     check(!verdict_untrusted("POST", ["X-Forwarded-Proto: https\r\n", "Cookie: __Host-gw_csrf=0123456789abcdef0123456789abcdef\r\n", HEADER], ""), "__Host- cookie not read when the proxy header is not trusted");
     check(verdict("POST", [COOKIE, FORM], "title=x&_csrf=0123456789abcdef0123456789abcdef&add=1"), "the field among others");
+
+    // The public form token: its own cookie and field, only through _csrf_ok_public; never through _csrf_ok.
+    {
+        let PUB = "Cookie: gw_csrf_pub=0123456789abcdef0123456789abcdef\r\n";
+        check(run_public("POST", [PUB, FORM], "_csrf_pub=0123456789abcdef0123456789abcdef"), "public: cookie and field agree");
+        check(!run_public("POST", [PUB, FORM], "_csrf_pub=ffffffffffffffffffffffffffffffff"), "public: wrong token");
+        check(!run_public("POST", [FORM], "_csrf_pub=0123456789abcdef0123456789abcdef"), "public: no cookie");
+        check(!run_public("POST", [PUB, FORM, "Sec-Fetch-Site: cross-site\r\n"], "_csrf_pub=0123456789abcdef0123456789abcdef"), "public: cross-site");
+        check(!verdict("POST", [PUB, FORM], "_csrf_pub=0123456789abcdef0123456789abcdef"), "a page without CSRF_PUBLIC refuses the public token");
+        check(!verdict("POST", [PUB, FORM], "_csrf=0123456789abcdef0123456789abcdef"), "the public cookie is not gw_csrf");
+    }
 
     print(checks - failures, " of ", checks, " checks pass");
     if failures > 0 { exit(1); }

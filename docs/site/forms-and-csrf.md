@@ -38,6 +38,7 @@ It sends that value as `X-CSRF-Token`.
 - A form with `gw-target` sends its hidden field with the fragment POST.
 - A bad token gets 403. A request with `Sec-Fetch-Site` other than
   `same-origin` or `none` gets 403 too.
+- A page whose `page.goose` says `const CSRF_PUBLIC = true;` also takes a public form token for its POST: the field `_csrf_pub` equal to the cookie `gw_csrf_pub` (`__Host-` behind an https proxy), a cookie of its own that never replaces `gw_csrf`. It is for a form on a cacheable page without JavaScript (goose-cms `@cms::form_csrf`) where a forged post harms nobody; no other page or route takes it.
 - A route opts out with `const CSRF = false;` on a line of its own. Use it
   for APIs called by clients that are not browsers, and for webhooks. Such a
   route must not trust cookies. Pages cannot opt out.

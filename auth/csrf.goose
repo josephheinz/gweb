@@ -79,6 +79,18 @@ fn _token_equal(a: const u8[:], b: const u8[:]) -> bool {
 // True for GET, HEAD, OPTIONS and Other; for the rest, false after writing a 403.
 // A present X-CSRF-Token header is the only token read; otherwise the _csrf field of the body.
 fn _csrf_ok(req: const http::Request&, ctx: const Ctx&, res: http::Response&) -> bool {
+    return _csrf_check(req, ctx, res, false);
+}
+
+// For a page whose page.goose says `const CSRF_PUBLIC = true;`: as _csrf_ok, and a post may instead carry the public form
+// token: the field _csrf_pub equal to the cookie gw_csrf_pub (__Host-gw_csrf_pub behind an https proxy), a cookie of its own
+// that never replaces gw_csrf. For a form on a cacheable page, written without JavaScript (cms::form_csrf); no route or page
+// takes it unless it says so.
+fn _csrf_ok_public(req: const http::Request&, ctx: const Ctx&, res: http::Response&) -> bool {
+    return _csrf_check(req, ctx, res, true);
+}
+
+fn _csrf_check(req: const http::Request&, ctx: const Ctx&, res: http::Response&, public: bool) -> bool {
     let m = req.method;
     if m == http::Method.Get || m == http::Method.Head || m == http::Method.Options || m == http::Method.Other { return true; }
 
@@ -93,6 +105,15 @@ fn _csrf_ok(req: const http::Request&, ctx: const Ctx&, res: http::Response&) ->
     let head, has_head = http::header(req, "x-csrf-token");
     if has_head { sent.append(trim(head)); } else { form(req, "_csrf", sent); }
     if has_cookie && _csrf_valid(cookie) && _token_equal(cookie, sent) { return true; }
+    if public && !has_head {
+        var pname: u8[>..] = [];
+        pname.append(_csrf_cookie_name(req, ctx.auth.trust_proxy));
+        pname.append("_pub");
+        let pc, has_pc = http::cookie(req, pname);
+        var ps: u8[>..] = [];
+        form(req, "_csrf_pub", ps);
+        if has_pc && _csrf_valid(pc) && _token_equal(pc, ps) { return true; }
+    }
     http::text(res, http::Status.Forbidden, "CSRF token missing or wrong; reload the page and try again\n");
     return false;
 }

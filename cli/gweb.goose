@@ -57,6 +57,7 @@ struct Dir {
     frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
+    csrf_public: bool = false,    // page.goose declares const CSRF_PUBLIC = true; (its POST also takes the public form token, gweb::_csrf_ok_public)
     no_mw: bool = false,          // route.goose has const MIDDLEWARE = false; (1.6): its own source's middleware is skipped
     max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
     too_large: bool = false,      // page.goose or route.goose defines fn too_large( (gweb 1.5)
@@ -3995,7 +3996,7 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("    }\n");
     if d.has_post {
         gen_upload_prelude(m, d.page_ns, d.max_upload, d.too_large);
-        m.append("    if !gweb::_csrf_ok(r, ctx, res) { return; }\n");
+        m.append(if d.csrf_public { "    if !gweb::_csrf_ok_public(r, ctx, res) { return; }\n" } else { "    if !gweb::_csrf_ok(r, ctx, res) { return; }\n" });
     }
     middleware_before(m, d, rq);
     if d.revalidate > 0 {
@@ -5639,6 +5640,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
                     d.too_large = defines(code, "too_large");
                     d.has_load = defines(code, "load");
                     d.has_post = defines(code, "POST");
+                    d.csrf_public = find(code, "const CSRF_PUBLIC = true;") >= 0;
                     d.has_load_res = takes_res(code, "load");
                     d.has_post_res = takes_res(code, "POST");
                     if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
