@@ -6094,10 +6094,11 @@ fn build(debug: bool, dev: bool) -> bool {
     format(times, cwd, "/", BUILD_DIR, "/", DEV_TIMES);
     // A dev build: the fastest correct C (docs/dev-builds.md): goose -O0, and the C at -O0 through the dev compiler,
     // which calls this binary back to compile it in parallel units. A build or start (1.8.3) takes the same
-    // compiler but keeps -O2: unchanged units are reused, so a rebuild after a small change is seconds, not a minute.
+    // compiler but keeps -O2, split in units too (1.8.7): unchanged units are reused, so a rebuild after a small
+    // change compiles a few units, not the whole program.
     let cached = dev || build_cache_on();
     if cached {
-        cc_env(cmd, mark, times, !dev, dev);
+        cc_env(cmd, mark, times, !dev, true);
     }
     goose_cmd(cmd);
     cmd.append(" build --color never ");

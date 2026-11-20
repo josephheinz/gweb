@@ -9,7 +9,7 @@
      changes. A file-scope static variable that is not const (the data-stack state, the globals' main instance) is
      declared extern there and defined once, in unit 0, so every unit shares one. An embedded file is declared extern
      and defined in ublob.c, which needs no header and rarely changes. Every
-     prototype after "---- prototypes ----" loses `static` (and `inline`) for hidden visibility, so units call each
+     prototype after "---- prototypes ----" loses `static` (and `inline` or `GS_INLINE`) for hidden visibility, so units call each
      other's functions.
    - Each function after "---- code ----" that has a prototype goes to one of the units, in order, without `static`
      (the cuts: see below). The rest (gs_init_globals, gs_program_init, main) stay static, in the last unit.
@@ -581,6 +581,7 @@ int32_t gweb_devcc(gweb_bytes cc_b, gweb_bytes args_b, int64_t units, gweb_bytes
             puts_(&hdr, "GW_HID ");
             size_t skip = 7;
             if (starts(p + 7, len - 7, "inline ")) skip += 7;
+            else if (starts(p + 7, len - 7, "GS_INLINE ")) skip += 10;   /* goose -O2: a C99 inline definition, no symbol */
             put(&hdr, p + skip, len - skip);
             last = e;
         }
@@ -645,6 +646,7 @@ int32_t gweb_devcc(gweb_bytes cc_b, gweb_bytes args_b, int64_t units, gweb_bytes
             size_t skip = 0;
             if (starts(p, len, "static ")) skip = 7;
             if (starts(p + skip, len - skip, "inline ")) skip += 7;
+            else if (starts(p + skip, len - skip, "GS_INLINE ")) skip += 10;
             put(&u[nunits - 1], p + skip, len - skip);
             puts_(&u[nunits - 1], "\n\n");
         } else {

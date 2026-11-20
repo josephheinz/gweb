@@ -15,6 +15,8 @@
 #    gweb __devcc compiles changed units only and reuses cached objects; a string's new text with the same length is
 #    served (constants are named by content); a missing object is compiled again; GWEB_DEV_UNITS=0 compiles the C
 #    whole; a production gen has no dev text; a dev binary outside its folder says why it cannot start.
+# 5. gweb build (production, goose -O2) splits the C too, units at -O2: a Goose change compiles some units, not
+#    all, and the binary serves; GWEB_BUILD_CACHE=0 compiles the C whole.
 #
 # Needs curl, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
 set -u
@@ -303,6 +305,24 @@ check "$(serve '<p>whole</p>' && echo ok)" "and the binary serves"
 check "$([ "$rc" = 2 ] && grep -qF 'cannot read .gweb/lits' "$WORK/away.log" && echo ok)" "a dev binary away from its folder says why: $(cat "$WORK/away.log")"
 "$GWEB" -C "$S4" gen >/dev/null 2>&1
 check "$(! grep -rq '_dev_lit' "$S4/.gweb" && [ ! -f "$S4/.gweb/lits" ] && grep -rqF 'out.append("<h1>Hello ' "$S4/.gweb" && echo ok)" "a production gen inlines template text"
+
+# 5. The production build splits as well (goose -O2 C, whose functions may be GS_INLINE).
+fresh prod
+S4="$WORK/prod"
+out=$("$GWEB" -C "$S4" build 2>&1)
+u=$(units "$out")
+check "$([ -n "$u" ] && [ "${u% *}" -gt 0 ] && echo ok)" "gweb build compiles the C in units: $out"
+check "$(serve '<h1>Hi 1</h1>' && echo ok)" "and the binary serves: $(cat "$WORK/split.log")"
+check "$([ ! -f "$S4/.gweb/lits" ] && grep -rqF --include='*.goose' 'out.append("<h1>Hi ' "$S4/.gweb" && echo ok)" "a production build keeps template text in the code"
+sed 's/n: 1,/n: 1 + 41,/' "$HERE/devbuild/site/app/page.goose" > "$S4/app/page.goose"
+out=$("$GWEB" -C "$S4" build 2>&1)
+u=$(units "$out")
+check "$([ -n "$u" ] && [ "${u% *}" -ge 1 ] && [ "${u% *}" -lt "${u#* }" ] && echo ok)" "a Goose change to a production build compiles some units, not all: $out"
+check "$(serve '<h1>Hi 42</h1>' && echo ok)" "and is served"
+echo '<p>whole</p>' >> "$S4/app/page.html"
+out=$(GWEB_BUILD_CACHE=0 "$GWEB" -C "$S4" build 2>&1)
+check "$(printf '%s\n' "$out" | grep -q 'built .gweb/server' && ! printf '%s\n' "$out" | grep -qF ' units)' && echo ok)" "GWEB_BUILD_CACHE=0 compiles the production C whole: $out"
+check "$(serve '<p>whole</p>' && echo ok)" "and the binary serves"
 
 echo "devbuild.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

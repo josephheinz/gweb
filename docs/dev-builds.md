@@ -1,6 +1,6 @@
 # Dev builds
 
-`gweb dev` and `gweb build --dev` build for speed. `gweb build`, `start` and `export` keep goose's `-O2` and one C file, but link the last binary when the C is the same as the last build's (1.8.3: a change to `tests/` or to a comment is not in the C); `gweb test` uses the split, cached compile with `-O0` goose and the C at `-O2`. `GWEB_BUILD_CACHE=0` turns both off. The same cache keeps tools (`tool NAME ...` lines of `gweb.packages`) in `~/.cache/gweb/tools/`, so a new app does not build the cms tool again.
+`gweb dev` and `gweb build --dev` build for speed. `gweb build`, `start` and `export` keep goose's `-O2` and the C at `-O2`, split in units and cached like a dev build's (1.8.7), and link the last binary when the C is the same as the last build's (1.8.3: a change to `tests/` or to a comment is not in the C); `gweb test` uses the split, cached compile with `-O0` goose and the C at `-O2`. `GWEB_BUILD_CACHE=0` turns both off (one C file). The same cache keeps tools (`tool NAME ...` lines of `gweb.packages`) in `~/.cache/gweb/tools/`, so a new app does not build the cms tool again.
 
 - **Fast C.** `goose build -O0` (no Goose inlining), and the program's C at `cc -O0` through a wrapper that gweb
   writes to `~/.cache/gweb/cc-HASH/cc` around the compiler `goose toolchain` names (so `GOOSE_CC` counts). The
@@ -83,6 +83,22 @@ by `gweb dev` (curl polling `/` every 10 ms), three runs each:
 watcher up to 0.3 s. 1.8: goose 1.6–2.2 s (the floor: goose's own front end, 1.5 s unloaded), the split 0.2 s,
 two of 63 units 0.5–0.7 s, link 0.07 s, restart 0.05 s plus macOS's first run of a new binary, 0.3 s. Every unit
 (a first dev build, or a change to a type or a specialization) is 2.1 s on 10 cores, against 7.8 s whole.
+
+### 1.8.7: production builds
+
+The cms-bench goose-cms site (28 routes, 36 pages, 35 MB of C at goose `-O2`), Apple M5, 10 cores. `gweb build`
+after a one-line template change, three runs:
+
+| | 1.8.6 (one file) | 1.8.7 (72 units) |
+|---|---|---|
+| every unit (first build) | 71–82 s | 15 s (goose 4, cc 11) |
+| a template change | 71–82 s | 5.3–5.5 s (goose 3.6, cc 1.4, 4 of 72 units) |
+| home page, 32 at once | 111,600–112,000 req/s | 111,000–111,200 req/s |
+| search, 32 at once | 5,000–5,400 req/s | 5,500–5,700 req/s |
+
+goose `-O2` marks some functions `GS_INLINE` (`inline`, with `always_inline` under clang); the split strips it as
+it strips `inline`, since an inline definition without `static` gives the linker no symbol. Units lose inlining
+across their cuts; goose `-O2` has already inlined at the Goose level, and the serving rates above did not move.
 
 ## Incremental builds: findings
 
