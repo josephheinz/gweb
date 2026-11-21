@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.8.8
 
 - The split compile works with packages that have C headers (`c_headers`, such as goose-search): goose includes them by a path relative to its C file, the units are compiled one folder down, so every unit failed and the build fell back to one file (about 80 s for a goose-cms site). Units now compile with `-iquote` that folder. Test: `test/devbuild.sh`.
 
