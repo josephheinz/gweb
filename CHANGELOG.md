@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The split compile works with packages that have C headers (`c_headers`, such as goose-search): goose includes them by a path relative to its C file, the units are compiled one folder down, so every unit failed and the build fell back to one file (about 80 s for a goose-cms site). Units now compile with `-iquote` that folder. Test: `test/devbuild.sh`.
+
 ## v1.8.7
 
 - `gweb build`, `start` and `export` split the C in units too, compiled in parallel at `-O2` and cached (`docs/dev-builds.md`): a template change on a goose-cms site rebuilds in about 5 s (was about 75 s), a first build in about 15 s; serving speed unchanged. `GWEB_BUILD_CACHE=0` compiles one file as before.

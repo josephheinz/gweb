@@ -16,7 +16,8 @@
 #    served (constants are named by content); a missing object is compiled again; GWEB_DEV_UNITS=0 compiles the C
 #    whole; a production gen has no dev text; a dev binary outside its folder says why it cannot start.
 # 5. gweb build (production, goose -O2) splits the C too, units at -O2: a Goose change compiles some units, not
-#    all, and the binary serves; GWEB_BUILD_CACHE=0 compiles the C whole.
+#    all, and the binary serves; GWEB_BUILD_CACHE=0 compiles the C whole; a package's C header (c_headers, which
+#    goose includes by a path relative to its C file) still splits (1.8.8).
 #
 # Needs curl, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
 set -u
@@ -323,6 +324,21 @@ echo '<p>whole</p>' >> "$S4/app/page.html"
 out=$(GWEB_BUILD_CACHE=0 "$GWEB" -C "$S4" build 2>&1)
 check "$(printf '%s\n' "$out" | grep -q 'built .gweb/server' && ! printf '%s\n' "$out" | grep -qF ' units)' && echo ok)" "GWEB_BUILD_CACHE=0 compiles the production C whole: $out"
 check "$(serve '<p>whole</p>' && echo ok)" "and the binary serves"
+
+# A package with a C header: goose's C includes it by a path relative to the C file, which the units are not beside.
+fresh hdr
+S4="$WORK/hdr"
+mkdir -p "$WORK/hpkg/inc" "$WORK/hpkg/src"
+printf 'c_sources = ["src/hp.c"];\nc_headers = ["inc/hp.h"];\n' > "$WORK/hpkg/hp.build"
+printf '#include <stdint.h>\nstatic inline int64_t hp_twice(int64_t x) { return 2 * x; }\nint64_t hp_plus(int64_t x);\n' > "$WORK/hpkg/inc/hp.h"
+printf '#include <stdint.h>\nint64_t hp_plus(int64_t x) { return x + 1; }\n' > "$WORK/hpkg/src/hp.c"
+printf 'namespace hp;\nextern fn twice(x: i64) -> i64 = "hp_twice";\nextern fn plus(x: i64) -> i64 = "hp_plus";\n' > "$WORK/hpkg/hp.goose"
+printf 'package hp %s\n' "$WORK/hpkg" > "$S4/gweb.packages"
+{ echo 'import hp;'; sed 's/n: 1,/n: hp::plus(hp::twice(20)),/' "$HERE/devbuild/site/app/page.goose"; } > "$S4/page.tmp" && mv "$S4/page.tmp" "$S4/app/page.goose"
+out=$("$GWEB" -C "$S4" build 2>&1)
+u=$(units "$out")
+check "$([ -n "$u" ] && [ "${u% *}" -gt 0 ] && echo ok)" "a package's C header: gweb build still compiles the C in units: $out"
+check "$(serve '<h1>Hi 41</h1>' && echo ok)" "and the binary serves: $(cat "$WORK/split.log")"
 
 echo "devbuild.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

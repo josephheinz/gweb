@@ -681,13 +681,18 @@ int32_t gweb_devcc(gweb_bytes cc_b, gweb_bytes args_b, int64_t units, gweb_bytes
 
     /* The compile flags: the arguments without the source, the output and the link inputs. */
     size_t nf = 0;
-    char **flags = malloc((na + 1) * sizeof *flags);
+    char **flags = malloc((na + 3) * sizeof *flags);
     for (size_t i = 0; i < na; i++) {
         if (args[i] == src) continue;
         if (strcmp(args[i], "-o") == 0) { i++; continue; }
         if (is_link_arg(args[i])) continue;
         flags[nf++] = args[i];
     }
+    /* goose includes a package's c_headers by a path relative to its C file; the units are one folder down. */
+    char srcdir[4096];
+    snprintf(srcdir, sizeof srcdir, "%.*s", (int)(strrchr(src, '/') - src), src);
+    flags[nf++] = "-iquote";
+    flags[nf++] = srcdir;
     h128 base = { 14695981039346656037ULL, 0x243F6A8885A308D3ULL };
     hmix(&base, cc, strlen(cc) + 1);
     for (size_t i = 0; i < nf; i++) hmix(&base, flags[i], strlen(flags[i]) + 1);
