@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.8.7
 
 - `gweb build`, `start` and `export` split the C in units too, compiled in parallel at `-O2` and cached (`docs/dev-builds.md`): a template change on a goose-cms site rebuilds in about 5 s (was about 75 s), a first build in about 15 s; serving speed unchanged. `GWEB_BUILD_CACHE=0` compiles one file as before.
 - The split handles goose `-O2` C: `GS_INLINE` functions lost their symbols, the link failed and the split fell back to one file.
